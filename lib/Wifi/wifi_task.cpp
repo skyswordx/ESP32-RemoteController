@@ -2,9 +2,20 @@
 #include "WiFi.h"
 
 #define WIFI_TASK_TAG "WIFI_TASK"
+#define NETWORK_TASK_TAG "NETWORK_TASK"
 
 static wifi_task_config_t* s_wifi_config = NULL;
 static bool s_is_connected = false;
+static bool s_network_connected = false;
+
+// 网络对象
+static WiFiClient* s_tcp_client = NULL;
+static WiFiServer* s_tcp_server = NULL;
+static WiFiUDP* s_udp = NULL;
+static char s_network_info[256] = {0};
+
+// 网络任务处理函数声明
+static void network_task_handler(void *pvParameters);
 
 static void wifi_task_handler(void *pvParameters)
 {
@@ -55,6 +66,15 @@ static void wifi_task_handler(void *pvParameters)
     if (WiFi.status() == WL_CONNECTED) {
         s_is_connected = true;
         ESP_LOGI(WIFI_TASK_TAG, "WiFi Connected. IP Address: %s", WiFi.localIP().toString().c_str());
+        
+        // 如果配置了网络协议且需要自动连接，启动网络任务
+        if (s_wifi_config->network_config.protocol != NETWORK_PROTOCOL_NONE && 
+            s_wifi_config->network_config.auto_connect) {
+            ESP_LOGI(WIFI_TASK_TAG, "Starting network task...");
+            if (xTaskCreate(network_task_handler, "network_task", 4096, NULL, 4, NULL) != pdPASS) {
+                ESP_LOGE(WIFI_TASK_TAG, "Failed to create network task");
+            }
+        }
     } else {
         s_is_connected = false;
         ESP_LOGW(WIFI_TASK_TAG, "WiFi connection failed or not in STA mode.");
@@ -89,4 +109,155 @@ bool is_wifi_connected(void)
     // For STA mode, we can rely on WiFi.isConnected()
     s_is_connected = WiFi.isConnected();
     return s_is_connected;
+}
+
+// 网络任务处理函数
+static void network_task_handler(void *pvParameters)
+{
+    ESP_LOGI(NETWORK_TASK_TAG, "Starting network task...");
+    
+    network_config_t* net_config = &s_wifi_config->network_config;
+    
+    switch (net_config->protocol) {
+        case NETWORK_PROTOCOL_TCP_CLIENT:
+        {
+            ESP_LOGI(NETWORK_TASK_TAG, "Initializing TCP Client mode");
+            s_tcp_client = new WiFiClient();
+            
+            uint32_t start_time = millis();
+            while (!s_tcp_client->connected()) {
+                ESP_LOGI(NETWORK_TASK_TAG, "Connecting to TCP server %s:%d", 
+                         net_config->remote_host, net_config->remote_port);
+                
+                if (s_tcp_client->connect(net_config->remote_host, net_config->remote_port)) {
+                    s_network_connected = true;
+                    ESP_LOGI(NETWORK_TASK_TAG, "TCP Client connected successfully");
+                    snprintf(s_network_info, sizeof(s_network_info), 
+                            "TCP Client connected to %s:%d", 
+                            net_config->remote_host, net_config->remote_port);
+                    break;
+                } else {
+                    ESP_LOGW(NETWORK_TASK_TAG, "TCP connection failed, retrying...");
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                }
+                
+                if (millis() - start_time > net_config->connect_timeout_ms) {
+                    ESP_LOGE(NETWORK_TASK_TAG, "TCP connection timeout!");
+                    break;
+                }
+            }
+            break;
+        }
+        
+        case NETWORK_PROTOCOL_TCP_SERVER:
+        {
+            ESP_LOGI(NETWORK_TASK_TAG, "Initializing TCP Server mode on port %d", net_config->local_port);
+            s_tcp_server = new WiFiServer(net_config->local_port);
+            s_tcp_server->begin();
+            s_network_connected = true;
+            ESP_LOGI(NETWORK_TASK_TAG, "TCP Server started successfully");
+            snprintf(s_network_info, sizeof(s_network_info), 
+                    "TCP Server listening on port %d", net_config->local_port);
+            break;
+        }
+        
+        case NETWORK_PROTOCOL_UDP:
+        {
+            ESP_LOGI(NETWORK_TASK_TAG, "Initializing UDP mode on port %d", net_config->local_port);
+            s_udp = new WiFiUDP();
+            if (s_udp->begin(net_config->local_port)) {
+                s_network_connected = true;
+                ESP_LOGI(NETWORK_TASK_TAG, "UDP initialized successfully");
+                snprintf(s_network_info, sizeof(s_network_info), 
+                        "UDP listening on port %d", net_config->local_port);
+            } else {
+                ESP_LOGE(NETWORK_TASK_TAG, "Failed to initialize UDP");
+            }
+            break;
+        }
+        
+        default:
+            ESP_LOGW(NETWORK_TASK_TAG, "Unknown network protocol");
+            break;
+    }
+    
+    // 网络任务完成初始化后删除自己
+    vTaskDelete(NULL);
+}
+
+int network_send_data(const uint8_t* data, size_t len)
+{
+    if (!s_network_connected || data == NULL || len == 0) {
+        return -1;
+    }
+    
+    network_config_t* net_config = &s_wifi_config->network_config;
+    
+    switch (net_config->protocol) {
+        case NETWORK_PROTOCOL_TCP_CLIENT:
+            if (s_tcp_client && s_tcp_client->connected()) {
+                return s_tcp_client->write(data, len);
+            }
+            break;
+            
+        case NETWORK_PROTOCOL_TCP_SERVER:
+            // TCP 服务器模式下，需要向所有连接的客户端发送数据
+            if (s_tcp_server) {
+                WiFiClient client = s_tcp_server->available();
+                if (client) {
+                    return client.write(data, len);
+                }
+            }
+            break;
+            
+        case NETWORK_PROTOCOL_UDP:
+            if (s_udp) {
+                s_udp->beginPacket(net_config->remote_host, net_config->remote_port);
+                int result = s_udp->write(data, len);
+                s_udp->endPacket();
+                return result;
+            }
+            break;
+            
+        default:
+            break;
+    }
+    
+    return -1;
+}
+
+int network_send_string(const char* str)
+{
+    if (str == NULL) {
+        return -1;
+    }
+    return network_send_data((const uint8_t*)str, strlen(str));
+}
+
+bool is_network_connected(void)
+{
+    if (!s_network_connected) {
+        return false;
+    }
+    
+    network_config_t* net_config = &s_wifi_config->network_config;
+    
+    switch (net_config->protocol) {
+        case NETWORK_PROTOCOL_TCP_CLIENT:
+            return (s_tcp_client && s_tcp_client->connected());
+            
+        case NETWORK_PROTOCOL_TCP_SERVER:
+            return (s_tcp_server != NULL);
+            
+        case NETWORK_PROTOCOL_UDP:
+            return (s_udp != NULL);
+            
+        default:
+            return false;
+    }
+}
+
+const char* get_network_info(void)
+{
+    return s_network_info;
 }

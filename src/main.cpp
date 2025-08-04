@@ -36,7 +36,7 @@ void setup() {
         ESP_LOGE(MAIN_TASK_TAG, "Failed to create UART Parser task");
     }
 
-    // Configure WiFi Task for STA mode
+    // Configure WiFi Task for STA mode with TCP client
     wifi_task_config_t wifi_config;
     memset(&wifi_config, 0, sizeof(wifi_task_config_t));
 
@@ -48,13 +48,34 @@ void setup() {
     wifi_config.tx_power = WIFI_POWER_19_5dBm; // Set max power
     wifi_config.sta_connect_timeout_ms = 15000; // 15 seconds timeout
 
+    // Configure network as TCP client
+    wifi_config.network_config.protocol = NETWORK_PROTOCOL_TCP_CLIENT;
+    strncpy(wifi_config.network_config.remote_host, "172.26.18.126", sizeof(wifi_config.network_config.remote_host) - 1); // 通常手机热点的网关IP
+    wifi_config.network_config.remote_port = 2233; // 手机端TCP服务器端口，您可以根据实际情况修改
+    wifi_config.network_config.auto_connect = true; // WiFi连接成功后自动开始TCP连接
+    wifi_config.network_config.connect_timeout_ms = 10000; // 10 seconds timeout for TCP connection
+
     // Start WiFi Task
     if (wifi_task_start(&wifi_config) != pdPASS) {
         ESP_LOGE(MAIN_TASK_TAG, "Failed to start WiFi task");
     }
 }
 
-void loop() {
+void loop() { /* 类似 defaultTask */
+    static bool message_sent = false;
+    
+    // 检查是否需要发送初始消息
+    if (!message_sent && is_wifi_connected() && is_network_connected()) {
+        ESP_LOGI(MAIN_TASK_TAG, "Sending hello message to TCP server...");
+        int result = network_send_string("hello misakaa from esp32\n");
+        if (result > 0) {
+            ESP_LOGI(MAIN_TASK_TAG, "Message sent successfully (%d bytes)", result);
+            message_sent = true;
+        } else {
+            ESP_LOGE(MAIN_TASK_TAG, "Failed to send message");
+        }
+    }
+    
     // 检查串口是否有数据输入
     if (Serial.available() > 0) {
         static char rx_buffer[128]; // 增加缓冲区大小以适应更长的命令

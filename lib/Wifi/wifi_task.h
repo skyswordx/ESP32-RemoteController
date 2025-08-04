@@ -5,10 +5,35 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "WiFi.h"
+#include "WiFiClient.h"
+#include "WiFiServer.h"
+#include "WiFiUdp.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/**
+ * @brief 网络协议类型
+ */
+typedef enum {
+    NETWORK_PROTOCOL_NONE = 0,      /*!< 不使用网络协议 */
+    NETWORK_PROTOCOL_TCP_CLIENT,    /*!< TCP 客户端模式 */
+    NETWORK_PROTOCOL_TCP_SERVER,    /*!< TCP 服务端模式 */
+    NETWORK_PROTOCOL_UDP            /*!< UDP 模式 */
+} network_protocol_t;
+
+/**
+ * @brief TCP/UDP 配置结构体
+ */
+typedef struct {
+    network_protocol_t protocol;    /*!< 网络协议类型 */
+    char remote_host[64];           /*!< 远程主机 IP 地址或域名 (客户端模式使用) */
+    uint16_t remote_port;           /*!< 远程端口 (客户端模式使用) */
+    uint16_t local_port;            /*!< 本地端口 (服务端模式或 UDP 使用) */
+    bool auto_connect;              /*!< WiFi 连接成功后是否自动开始网络连接 */
+    uint32_t connect_timeout_ms;    /*!< 连接超时时间 (ms) */
+} network_config_t;
 
 /**
  * @brief WiFi 任务配置结构体 (基于 Arduino)
@@ -22,6 +47,7 @@ typedef struct {
     bool power_save;                    /*!< 是否开启 WiFi 省电模式 */
     wifi_power_t tx_power;              /*!< WiFi 发射功率 */
     uint32_t sta_connect_timeout_ms;    /*!< STA 模式下连接超时时间 (ms) */
+    network_config_t network_config;    /*!< 网络协议配置 */
 } wifi_task_config_t;
 
 /**
@@ -42,6 +68,43 @@ BaseType_t wifi_task_start(wifi_task_config_t *config);
  *      - false: 未连接到 AP
  */
 bool is_wifi_connected(void);
+
+/**
+ * @brief 发送数据 (TCP 或 UDP)
+ *
+ * @param data 要发送的数据
+ * @param len 数据长度
+ * @return 
+ *      - 发送的字节数: 成功
+ *      - -1: 失败
+ */
+int network_send_data(const uint8_t* data, size_t len);
+
+/**
+ * @brief 发送字符串 (TCP 或 UDP)
+ *
+ * @param str 要发送的字符串
+ * @return 
+ *      - 发送的字节数: 成功
+ *      - -1: 失败
+ */
+int network_send_string(const char* str);
+
+/**
+ * @brief 检查网络连接状态
+ *
+ * @return 
+ *      - true: 网络连接正常
+ *      - false: 网络连接断开
+ */
+bool is_network_connected(void);
+
+/**
+ * @brief 获取网络连接信息
+ *
+ * @return 网络连接信息字符串
+ */
+const char* get_network_info(void);
 
 #ifdef __cplusplus
 }
