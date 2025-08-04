@@ -106,6 +106,68 @@ bool is_network_connected(void);
  */
 const char* get_network_info(void);
 
+/**
+ * @brief 断开当前 WiFi 连接
+ *
+ * @return 
+ *      - true: 成功断开
+ *      - false: 断开失败
+ */
+bool wifi_disconnect(void);
+
+/**
+ * @brief 使用新的 SSID 和密码连接 WiFi
+ *
+ * @param ssid 新的 WiFi SSID
+ * @param password 新的 WiFi 密码
+ * @param timeout_ms 连接超时时间 (ms)
+ * @return 
+ *      - true: 连接成功
+ *      - false: 连接失败
+ */
+bool wifi_connect_new(const char* ssid, const char* password, uint32_t timeout_ms);
+
+/**
+ * @brief 获取当前 WiFi 配置信息
+ *
+ * @param config 用于存储当前配置的结构体指针
+ * @return 
+ *      - true: 获取成功
+ *      - false: 获取失败
+ */
+bool get_current_wifi_config(wifi_task_config_t* config);
+
+/**
+ * @brief 断开当前网络连接 (TCP/UDP)
+ *
+ * @return 
+ *      - true: 成功断开
+ *      - false: 断开失败
+ */
+bool network_disconnect(void);
+
+/**
+ * @brief 配置 TCP 客户端参数并连接
+ *
+ * @param remote_host 远程主机 IP 地址
+ * @param remote_port 远程主机端口
+ * @param timeout_ms 连接超时时间 (ms)
+ * @return 
+ *      - true: 连接成功
+ *      - false: 连接失败
+ */
+bool network_connect_tcp_client(const char* remote_host, uint16_t remote_port, uint32_t timeout_ms);
+
+/**
+ * @brief 获取当前网络配置信息
+ *
+ * @param config 用于存储当前网络配置的结构体指针
+ * @return 
+ *      - true: 获取成功
+ *      - false: 获取失败
+ */
+bool get_current_network_config(network_config_t* config);
+
 #ifdef __cplusplus
 }
 #endif

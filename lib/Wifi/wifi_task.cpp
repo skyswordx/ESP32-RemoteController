@@ -261,3 +261,155 @@ const char* get_network_info(void)
 {
     return s_network_info;
 }
+
+bool wifi_disconnect(void)
+{
+    ESP_LOGI(WIFI_TASK_TAG, "Disconnecting WiFi...");
+    WiFi.disconnect();
+    s_is_connected = false;
+    return true;
+}
+
+bool wifi_connect_new(const char* ssid, const char* password, uint32_t timeout_ms)
+{
+    if (ssid == NULL) {
+        ESP_LOGE(WIFI_TASK_TAG, "SSID cannot be NULL");
+        return false;
+    }
+    
+    ESP_LOGI(WIFI_TASK_TAG, "Connecting to new WiFi: %s", ssid);
+    
+    // 断开当前连接
+    WiFi.disconnect();
+    vTaskDelay(pdMS_TO_TICKS(500));
+    
+    // 连接新网络
+    if (password && strlen(password) > 0) {
+        WiFi.begin(ssid, password);
+    } else {
+        WiFi.begin(ssid);
+    }
+    
+    uint32_t start_time = millis();
+    while (WiFi.status() != WL_CONNECTED) {
+        vTaskDelay(pdMS_TO_TICKS(500));
+        if (millis() - start_time > timeout_ms) {
+            ESP_LOGE(WIFI_TASK_TAG, "WiFi connection timeout");
+            s_is_connected = false;
+            return false;
+        }
+    }
+    
+    s_is_connected = true;
+    ESP_LOGI(WIFI_TASK_TAG, "WiFi connected successfully. IP: %s", WiFi.localIP().toString().c_str());
+    
+    // 更新配置
+    if (s_wifi_config) {
+        strncpy(s_wifi_config->ssid, ssid, sizeof(s_wifi_config->ssid) - 1);
+        s_wifi_config->ssid[sizeof(s_wifi_config->ssid) - 1] = '\0';
+        
+        if (password) {
+            strncpy(s_wifi_config->password, password, sizeof(s_wifi_config->password) - 1);
+            s_wifi_config->password[sizeof(s_wifi_config->password) - 1] = '\0';
+        } else {
+            s_wifi_config->password[0] = '\0';
+        }
+    }
+    
+    return true;
+}
+
+bool get_current_wifi_config(wifi_task_config_t* config)
+{
+    if (config == NULL || s_wifi_config == NULL) {
+        return false;
+    }
+    
+    memcpy(config, s_wifi_config, sizeof(wifi_task_config_t));
+    return true;
+}
+
+bool network_disconnect(void)
+{
+    ESP_LOGI(NETWORK_TASK_TAG, "Disconnecting network...");
+    
+    if (s_tcp_client) {
+        s_tcp_client->stop();
+        delete s_tcp_client;
+        s_tcp_client = NULL;
+    }
+    
+    if (s_tcp_server) {
+        s_tcp_server->end();
+        delete s_tcp_server;
+        s_tcp_server = NULL;
+    }
+    
+    if (s_udp) {
+        s_udp->stop();
+        delete s_udp;
+        s_udp = NULL;
+    }
+    
+    s_network_connected = false;
+    memset(s_network_info, 0, sizeof(s_network_info));
+    
+    ESP_LOGI(NETWORK_TASK_TAG, "Network disconnected");
+    return true;
+}
+
+bool network_connect_tcp_client(const char* remote_host, uint16_t remote_port, uint32_t timeout_ms)
+{
+    if (remote_host == NULL) {
+        ESP_LOGE(NETWORK_TASK_TAG, "Remote host cannot be NULL");
+        return false;
+    }
+    
+    // 断开当前连接
+    network_disconnect();
+    
+    ESP_LOGI(NETWORK_TASK_TAG, "Connecting TCP client to %s:%d", remote_host, remote_port);
+    
+    s_tcp_client = new WiFiClient();
+    
+    uint32_t start_time = millis();
+    while (!s_tcp_client->connected()) {
+        if (s_tcp_client->connect(remote_host, remote_port)) {
+            s_network_connected = true;
+            ESP_LOGI(NETWORK_TASK_TAG, "TCP Client connected successfully");
+            snprintf(s_network_info, sizeof(s_network_info), 
+                    "TCP Client connected to %s:%d", remote_host, remote_port);
+            
+            // 更新配置
+            if (s_wifi_config) {
+                s_wifi_config->network_config.protocol = NETWORK_PROTOCOL_TCP_CLIENT;
+                strncpy(s_wifi_config->network_config.remote_host, remote_host, 
+                       sizeof(s_wifi_config->network_config.remote_host) - 1);
+                s_wifi_config->network_config.remote_host[sizeof(s_wifi_config->network_config.remote_host) - 1] = '\0';
+                s_wifi_config->network_config.remote_port = remote_port;
+            }
+            
+            return true;
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            if (millis() - start_time > timeout_ms) {
+                ESP_LOGE(NETWORK_TASK_TAG, "TCP connection timeout");
+                delete s_tcp_client;
+                s_tcp_client = NULL;
+                return false;
+            }
+        }
+    }
+    
+    return false;
+}
+
+bool get_current_network_config(network_config_t* config)
+{
+    if (config == NULL || s_wifi_config == NULL) {
+        return false;
+    }
+    
+    memcpy(config, &s_wifi_config->network_config, sizeof(network_config_t));
+    return true;
+}

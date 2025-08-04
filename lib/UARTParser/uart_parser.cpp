@@ -12,6 +12,7 @@
 #include "esp_log.h"
 #include "soc/soc.h"  // 包含 CPU 频率相关函数
 #include "wifi_task.h" // 包含用于获取WiFi状态的函数
+#include "Arduino.h" // 包含 Arduino 功能，如 WiFi.localIP()
 
 /* 宏定义 */
 #define UART_PARSER_QUEUE_LENGTH    8      // 命令队列深度
@@ -47,6 +48,66 @@ static void handle_get_sys_info(int argc, char *argv[]);
  */
 static void handle_get_wifi_status(int argc, char *argv[]);
 
+/**
+ * @brief 'wifi_disconnect' 命令的处理函数。
+ * 用法: wifi_disconnect
+ */
+static void handle_wifi_disconnect(int argc, char *argv[]);
+
+/**
+ * @brief 'wifi_connect' 命令的处理函数。
+ * 用法: wifi_connect <ssid> [password]
+ */
+static void handle_wifi_connect(int argc, char *argv[]);
+
+/**
+ * @brief 'wifi_config' 命令的处理函数。
+ * 用法: wifi_config
+ */
+static void handle_wifi_config(int argc, char *argv[]);
+
+/**
+ * @brief 'network_status' 命令的处理函数。
+ * 用法: network_status
+ */
+static void handle_network_status(int argc, char *argv[]);
+
+/**
+ * @brief 'network_disconnect' 命令的处理函数。
+ * 用法: network_disconnect
+ */
+static void handle_network_disconnect(int argc, char *argv[]);
+
+/**
+ * @brief 'tcp_connect' 命令的处理函数。
+ * 用法: tcp_connect <host> <port>
+ */
+static void handle_tcp_connect(int argc, char *argv[]);
+
+/**
+ * @brief 'network_config' 命令的处理函数。
+ * 用法: network_config
+ */
+static void handle_network_config(int argc, char *argv[]);
+
+/**
+ * @brief 'network_send' 命令的处理函数。
+ * 用法: network_send <message>
+ */
+static void handle_network_send(int argc, char *argv[]);
+
+/**
+ * @brief 'wifi_reconnect' 命令的处理函数。
+ * 用法: wifi_reconnect
+ */
+static void handle_wifi_reconnect(int argc, char *argv[]);
+
+/**
+ * @brief 'network_reconnect' 命令的处理函数。
+ * 用法: network_reconnect
+ */
+static void handle_network_reconnect(int argc, char *argv[]);
+
 
 /* -------------------- 2. 命令分派表 -------------------- */
 // 在这里将您的命令和处理函数关联起来。
@@ -57,6 +118,20 @@ static const command_t command_table[] = {
     {"reboot",          handle_reboot,          "reboot: 重启设备。"},
     {"get_sys_info",    handle_get_sys_info,    "get_sys_info: 获取系统信息。"},
     {"get_wifi_status", handle_get_wifi_status, "get_wifi_status: 获取WiFi连接状态。"},
+    
+    /* WiFi 控制命令 */
+    {"wifi_disconnect", handle_wifi_disconnect, "wifi_disconnect: 断开当前WiFi连接。"},
+    {"wifi_connect",    handle_wifi_connect,    "wifi_connect <ssid> [password]: 连接到指定WiFi网络。"},
+    {"wifi_config",     handle_wifi_config,     "wifi_config: 显示当前WiFi配置信息。"},
+    {"wifi_reconnect",  handle_wifi_reconnect,  "wifi_reconnect: 使用当前配置重新连接WiFi。"},
+    
+    /* 网络协议控制命令 */
+    {"network_status",     handle_network_status,     "network_status: 获取当前网络协议状态。"},
+    {"network_disconnect", handle_network_disconnect, "network_disconnect: 断开当前网络连接。"},
+    {"tcp_connect",        handle_tcp_connect,        "tcp_connect <host> <port>: 连接到TCP服务器。"},
+    {"network_config",     handle_network_config,     "network_config: 显示当前网络配置信息。"},
+    {"network_send",       handle_network_send,       "network_send <message>: 通过网络发送消息。"},
+    {"network_reconnect",  handle_network_reconnect,  "network_reconnect: 使用当前配置重新连接网络。"},
     /* --- 您可以在此行下方添加您的新命令 --- */
     
 };
@@ -198,14 +273,269 @@ static void handle_get_sys_info(int argc, char *argv[])
 
 static void handle_get_wifi_status(int argc, char *argv[])
 {
-    char response[64];
+    char response[128];
 
     if (is_wifi_connected()) {
-        snprintf(response, sizeof(response), "WiFi Status: Connected\r\n");
+        snprintf(response, sizeof(response), 
+                "WiFi Status: Connected\r\n"
+                "IP Address: %s\r\n", 
+                WiFi.localIP().toString().c_str());
     } else {
         snprintf(response, sizeof(response), "WiFi Status: Disconnected\r\n");
     }
     uart_parser_put_string(response);
+}
+
+static void handle_wifi_disconnect(int argc, char *argv[])
+{
+    if (wifi_disconnect()) {
+        uart_parser_put_string("WiFi disconnected successfully.\r\n");
+    } else {
+        uart_parser_put_string("Failed to disconnect WiFi.\r\n");
+    }
+}
+
+static void handle_wifi_connect(int argc, char *argv[])
+{
+    char response[128];
+    
+    if (argc < 2) {
+        uart_parser_put_string("Usage: wifi_connect <ssid> [password]\r\n");
+        return;
+    }
+    
+    const char* ssid = argv[1];
+    const char* password = (argc >= 3) ? argv[2] : NULL;
+    
+    snprintf(response, sizeof(response), "Connecting to WiFi: %s...\r\n", ssid);
+    uart_parser_put_string(response);
+    
+    if (wifi_connect_new(ssid, password, 15000)) {
+        snprintf(response, sizeof(response), 
+                "WiFi connected successfully!\r\n"
+                "IP Address: %s\r\n", 
+                WiFi.localIP().toString().c_str());
+        uart_parser_put_string(response);
+    } else {
+        uart_parser_put_string("Failed to connect to WiFi.\r\n");
+    }
+}
+
+static void handle_wifi_config(int argc, char *argv[])
+{
+    wifi_task_config_t config;
+    char response[256];
+    
+    if (get_current_wifi_config(&config)) {
+        snprintf(response, sizeof(response),
+                "Current WiFi Configuration:\r\n"
+                "  SSID: %s\r\n"
+                "  Mode: %s\r\n"
+                "  Power Save: %s\r\n"
+                "  TX Power: %d\r\n",
+                config.ssid,
+                (config.wifi_mode == WIFI_STA) ? "Station" : 
+                (config.wifi_mode == WIFI_AP) ? "Access Point" : "AP+STA",
+                config.power_save ? "Enabled" : "Disabled",
+                (int)config.tx_power);
+        uart_parser_put_string(response);
+    } else {
+        uart_parser_put_string("Failed to get WiFi configuration.\r\n");
+    }
+}
+
+static void handle_network_status(int argc, char *argv[])
+{
+    char response[128];
+    
+    if (is_network_connected()) {
+        const char* info = get_network_info();
+        snprintf(response, sizeof(response), 
+                "Network Status: Connected\r\n"
+                "Info: %s\r\n", 
+                info ? info : "Unknown");
+    } else {
+        snprintf(response, sizeof(response), "Network Status: Disconnected\r\n");
+    }
+    uart_parser_put_string(response);
+}
+
+static void handle_network_disconnect(int argc, char *argv[])
+{
+    if (network_disconnect()) {
+        uart_parser_put_string("Network disconnected successfully.\r\n");
+    } else {
+        uart_parser_put_string("Failed to disconnect network.\r\n");
+    }
+}
+
+static void handle_tcp_connect(int argc, char *argv[])
+{
+    char response[128];
+    
+    if (argc != 3) {
+        uart_parser_put_string("Usage: tcp_connect <host> <port>\r\n");
+        return;
+    }
+    
+    const char* host = argv[1];
+    uint16_t port = (uint16_t)atoi(argv[2]);
+    
+    if (port == 0) {
+        uart_parser_put_string("Error: Invalid port number.\r\n");
+        return;
+    }
+    
+    snprintf(response, sizeof(response), "Connecting to TCP server %s:%d...\r\n", host, port);
+    uart_parser_put_string(response);
+    
+    if (network_connect_tcp_client(host, port, 10000)) {
+        uart_parser_put_string("TCP connection established successfully!\r\n");
+    } else {
+        uart_parser_put_string("Failed to connect to TCP server.\r\n");
+    }
+}
+
+static void handle_network_config(int argc, char *argv[])
+{
+    network_config_t config;
+    char response[256];
+    
+    if (get_current_network_config(&config)) {
+        const char* protocol_str;
+        switch (config.protocol) {
+            case NETWORK_PROTOCOL_TCP_CLIENT:
+                protocol_str = "TCP Client";
+                break;
+            case NETWORK_PROTOCOL_TCP_SERVER:
+                protocol_str = "TCP Server";
+                break;
+            case NETWORK_PROTOCOL_UDP:
+                protocol_str = "UDP";
+                break;
+            default:
+                protocol_str = "None";
+                break;
+        }
+        
+        snprintf(response, sizeof(response),
+                "Current Network Configuration:\r\n"
+                "  Protocol: %s\r\n"
+                "  Remote Host: %s\r\n"
+                "  Remote Port: %d\r\n"
+                "  Local Port: %d\r\n"
+                "  Auto Connect: %s\r\n",
+                protocol_str,
+                config.remote_host,
+                config.remote_port,
+                config.local_port,
+                config.auto_connect ? "Enabled" : "Disabled");
+        uart_parser_put_string(response);
+    } else {
+        uart_parser_put_string("Failed to get network configuration.\r\n");
+    }
+}
+
+static void handle_network_send(int argc, char *argv[])
+{
+    char response[128];
+    
+    if (argc < 2) {
+        uart_parser_put_string("Usage: network_send <message>\r\n");
+        return;
+    }
+    
+    // 重构消息，支持带空格的消息
+    char message[256] = {0};
+    for (int i = 1; i < argc; i++) {
+        if (i > 1) {
+            strcat(message, " ");
+        }
+        strcat(message, argv[i]);
+    }
+    strcat(message, "\n");
+    
+    int result = network_send_string(message);
+    if (result > 0) {
+        snprintf(response, sizeof(response), "Message sent successfully (%d bytes).\r\n", result);
+        uart_parser_put_string(response);
+    } else {
+        uart_parser_put_string("Failed to send message. Check network connection.\r\n");
+    }
+}
+
+static void handle_wifi_reconnect(int argc, char *argv[])
+{
+    char response[128];
+    wifi_task_config_t config;
+    
+    // 获取当前配置
+    if (!get_current_wifi_config(&config)) {
+        uart_parser_put_string("Error: No current WiFi configuration found.\r\n");
+        return;
+    }
+    
+    snprintf(response, sizeof(response), "Reconnecting to WiFi: %s...\r\n", config.ssid);
+    uart_parser_put_string(response);
+    
+    // 断开当前连接并重新连接
+    wifi_disconnect();
+    vTaskDelay(pdMS_TO_TICKS(1000)); // 等待断开完成
+    
+    if (wifi_connect_new(config.ssid, config.password, 15000)) {
+        snprintf(response, sizeof(response), 
+                "WiFi reconnected successfully!\r\n"
+                "IP Address: %s\r\n", 
+                WiFi.localIP().toString().c_str());
+        uart_parser_put_string(response);
+    } else {
+        uart_parser_put_string("Failed to reconnect to WiFi.\r\n");
+    }
+}
+
+static void handle_network_reconnect(int argc, char *argv[])
+{
+    char response[128];
+    network_config_t config;
+    
+    // 获取当前网络配置
+    if (!get_current_network_config(&config)) {
+        uart_parser_put_string("Error: No current network configuration found.\r\n");
+        return;
+    }
+    
+    // 检查是否有有效的网络配置
+    if (config.protocol == NETWORK_PROTOCOL_NONE) {
+        uart_parser_put_string("Error: No network protocol configured.\r\n");
+        return;
+    }
+    
+    uart_parser_put_string("Reconnecting to network...\r\n");
+    
+    // 断开当前网络连接
+    network_disconnect();
+    vTaskDelay(pdMS_TO_TICKS(500)); // 等待断开完成
+    
+    // 根据协议类型重新连接
+    switch (config.protocol) {
+        case NETWORK_PROTOCOL_TCP_CLIENT:
+            if (network_connect_tcp_client(config.remote_host, config.remote_port, 10000)) {
+                uart_parser_put_string("Network reconnected successfully!\r\n");
+            } else {
+                uart_parser_put_string("Failed to reconnect to network.\r\n");
+            }
+            break;
+            
+        case NETWORK_PROTOCOL_TCP_SERVER:
+        case NETWORK_PROTOCOL_UDP:
+            uart_parser_put_string("Note: Server/UDP modes don't require active reconnection.\r\n");
+            // 对于服务器模式和UDP，可以考虑重新初始化
+            break;
+            
+        default:
+            uart_parser_put_string("Error: Unsupported protocol for reconnection.\r\n");
+            break;
+    }
 }
 
 /* -------------------- 6. 平台相关的硬件接口 (需要用户实现) -------------------- */
