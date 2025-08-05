@@ -80,6 +80,9 @@ joystick_data_t joystick_read(void) {
     // 读取按钮状态
     data.button_pressed = joystick_get_button_state();
     
+    // 添加时间戳
+    data.timestamp = xTaskGetTickCount();
+    
     return data;
 }
 
@@ -131,10 +134,17 @@ void joystick_task(void) {
     // 检查数据是否有变化（减少不必要的回调）
     bool data_changed = (abs(current_data.x - last_data.x) > 5 || 
                         abs(current_data.y - last_data.y) > 5 ||
-                        current_data.in_deadzone != last_data.in_deadzone);
+                        current_data.in_deadzone != last_data.in_deadzone ||
+                        current_data.button_pressed != last_data.button_pressed);
     
-    if (data_changed && data_callback) {
-        data_callback(&current_data);
+    if (data_changed) {
+        // 更新到DataPlatform
+        data_service_update_joystick(&current_data);
+        
+        // 调用回调函数（保持兼容性）
+        if (data_callback) {
+            data_callback(&current_data);
+        }
     }
     
     // 检查按钮状态变化

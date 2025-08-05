@@ -18,9 +18,11 @@
 extern "C" {
 #endif
 
-#include "FreeRTOS.h"
-#include "event_groups.h"
-#include "semphr.h"
+/* 包含FreeRTOS头文件 */
+#include "freertos/FreeRTOS.h"
+#include "freertos/event_groups.h"
+#include "freertos/semphr.h"
+
 
 /*============================================================================*/
 /* 事件標誌組定義 (Event Bits)                         */
@@ -32,8 +34,10 @@ extern "C" {
 #define BIT_EVENT_TEMP_HUMID_UPDATED   (1 << 0) // 溫濕度數據已更新
 #define BIT_EVENT_IMU_UPDATED          (1 << 1) // IMU數據已更新
 #define BIT_EVENT_GPS_UPDATED          (1 << 2) // GPS數據已更新
+#define BIT_EVENT_ENCODER_UPDATED      (1 << 3) // 旋转编码器数据已更新
+#define BIT_EVENT_JOYSTICK_UPDATED     (1 << 4) // 摇杆数据已更新
 // 在此處為新的傳感器或事件添加更多的事件位...
-// #define BIT_EVENT_NEW_SENSOR_UPDATED (1 << 3)
+// #define BIT_EVENT_NEW_SENSOR_UPDATED (1 << 5)
 
 /*============================================================================*/
 /* 系統狀態數據結構 (System State)                     */
@@ -63,6 +67,31 @@ typedef struct {
 } gps_data_t;
 
 /**
+ * @brief 旋转编码器数据结构
+ */
+typedef struct {
+    int32_t position;        // 编码器位置
+    int32_t delta;           // 位置变化量
+    bool    button_pressed;  // 按钮状态
+    uint32_t timestamp;      // 时间戳
+} encoder_data_t;
+
+/**
+ * @brief 摇杆数据结构
+ */
+typedef struct {
+    int16_t x;               // X轴值 (-512 到 +512)
+    int16_t y;               // Y轴值 (-512 到 +512)
+    uint16_t raw_x;          // 原始X轴ADC值 (0-4095)
+    uint16_t raw_y;          // 原始Y轴ADC值 (0-4095)
+    bool button_pressed;     // 按钮状态
+    bool in_deadzone;        // 是否在死区内
+    float magnitude;         // 摇杆偏移量 (0.0-1.0)
+    float angle;             // 摇杆角度 (0-360度)
+    uint32_t timestamp;      // 时间戳
+} joystick_data_t;
+
+/**
  * @brief 系統狀態緩存的完整數據結構
  * @details
  * 這是系統中所有共享數據的集合。數據服務層的核心職責就是維護該結構的
@@ -73,6 +102,8 @@ typedef struct {
     float      humidity;    // 濕度 (%)
     imu_data_t imu_data;    // IMU數據
     gps_data_t gps_data;    // GPS數據
+    encoder_data_t encoder_data;  // 旋转编码器数据
+    joystick_data_t joystick_data; // 摇杆数据
     // 在此處為新的傳感器添加數據字段...
     // uint32_t new_sensor_value;
 } system_state_t;
@@ -124,6 +155,22 @@ void data_service_update_imu(const imu_data_t *p_imu_data);
  * @param[in] p_gps_data 指向包含最新GPS數據的結構體。
  */
 void data_service_update_gps(const gps_data_t *p_gps_data);
+
+/**
+ * @brief 更新旋转编码器数据
+ * @details
+ * 由编码器任务调用。
+ * @param[in] p_encoder_data 指向包含最新编码器数据的结构体。
+ */
+void data_service_update_encoder(const encoder_data_t *p_encoder_data);
+
+/**
+ * @brief 更新摇杆数据
+ * @details
+ * 由摇杆任务调用。
+ * @param[in] p_joystick_data 指向包含最新摇杆数据的结构体。
+ */
+void data_service_update_joystick(const joystick_data_t *p_joystick_data);
 
 // 在此處為新的傳感器添加更新函數的聲明...
 // void data_service_update_new_sensor(uint32_t value);

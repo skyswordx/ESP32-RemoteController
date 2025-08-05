@@ -2,6 +2,7 @@
 #define JOYSTICK_DRIVER_H
 
 #include "Arduino.h"
+#include "data_service.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -20,18 +21,7 @@ typedef struct {
     uint16_t center_y;       // Y轴中心值校准
 } joystick_config_t;
 
-// 摇杆数据结构体
-typedef struct {
-    int16_t x;               // X轴值 (-512 到 +512)
-    int16_t y;               // Y轴值 (-512 到 +512)
-    uint16_t raw_x;          // 原始X轴ADC值 (0-4095)
-    uint16_t raw_y;          // 原始Y轴ADC值 (0-4095)
-    bool button_pressed;     // 按钮状态
-    bool in_deadzone;        // 是否在死区内
-    float magnitude;         // 摇杆偏移量 (0.0-1.0)
-    float angle;             // 摇杆角度 (0-360度)
-} joystick_data_t;
-
+// 使用DataPlatform中定义的joystick_data_t结构体
 // 摇杆回调函数类型
 typedef void (*joystick_callback_t)(const joystick_data_t* data);
 typedef void (*joystick_button_callback_t)(bool pressed);

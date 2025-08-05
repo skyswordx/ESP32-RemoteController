@@ -75,7 +75,16 @@ void encoder_task(void) {
         
         ESP_LOGD(TAG, "Position: %ld, Delta: %ld", current_position, delta);
         
-        // 调用回调函数
+        // 更新到DataPlatform
+        encoder_data_t encoder_data = {
+            .position = current_position,
+            .delta = delta,
+            .button_pressed = encoder_get_button_state(),
+            .timestamp = xTaskGetTickCount()
+        };
+        data_service_update_encoder(&encoder_data);
+        
+        // 调用回调函数（保持兼容性）
         if (position_callback) {
             position_callback(current_position, delta);
         }

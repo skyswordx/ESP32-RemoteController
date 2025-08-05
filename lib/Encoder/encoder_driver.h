@@ -3,6 +3,7 @@
 
 #include "Arduino.h"
 #include "ESP32Encoder.h"
+#include "data_service.h"
 
 #ifdef __cplusplus
 extern "C" {

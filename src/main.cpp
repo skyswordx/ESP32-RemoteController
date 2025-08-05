@@ -10,6 +10,7 @@ extern "C" {
 #include "uart_parser.h"
 #include "encoder_driver.h"
 #include "joystick_driver.h"
+#include "data_service.h"
 }
 
 #define MAIN_TASK_TAG "MAIN"
@@ -25,52 +26,97 @@ extern "C" void uart_parser_put_string(const char *str)
     Serial.print(str);
 }
 
-// 编码器回调函数
-extern "C" void encoder_position_changed(int32_t position, int32_t delta) {
-    ESP_LOGI(MAIN_TASK_TAG, "编码器位置: %ld, 变化量: %ld", position, delta);
-    
-    // 可以通过网络发送编码器数据
-    if (is_wifi_connected() && is_network_connected()) {
-        char buffer[64];
-        snprintf(buffer, sizeof(buffer), "ENCODER:%ld,%ld\n", position, delta);
-        network_send_string(buffer);
+// 数据发布任务 - 监听DataPlatform事件并通过网络发送
+extern "C" void data_publisher_task(void* parameter) {
+    EventGroupHandle_t event_group = data_service_get_event_group_handle();
+    if (event_group == NULL) {
+        ESP_LOGE(MAIN_TASK_TAG, "Failed to get event group handle");
+        vTaskDelete(NULL);
+        return;
     }
+    
+    const EventBits_t bits_to_wait = BIT_EVENT_ENCODER_UPDATED | BIT_EVENT_JOYSTICK_UPDATED;
+    system_state_t system_state;
+    
+    ESP_LOGI(MAIN_TASK_TAG, "Data publisher task started");
+    
+    while (1) {
+        // 等待任意一个传感器数据更新事件
+        EventBits_t bits = xEventGroupWaitBits(
+            event_group,
+            bits_to_wait,
+            pdTRUE,  // 清除事件位
+            pdFALSE, // 等待任意一个事件
+            portMAX_DELAY
+        );
+        
+        // 获取最新的系统状态
+        data_service_get_system_state(&system_state);
+        
+        // 检查网络连接状态
+        if (!is_wifi_connected() || !is_network_connected()) {
+            continue;
+        }
+        
+        // 发送编码器数据
+        if (bits & BIT_EVENT_ENCODER_UPDATED) {
+            char buffer[128];
+            snprintf(buffer, sizeof(buffer), 
+                    "ENCODER:{\"pos\":%ld,\"delta\":%ld,\"btn\":%s,\"ts\":%lu}\n",
+                    system_state.encoder_data.position,
+                    system_state.encoder_data.delta,
+                    system_state.encoder_data.button_pressed ? "true" : "false",
+                    system_state.encoder_data.timestamp);
+            
+            int result = network_send_string(buffer);
+            if (result > 0) {
+                ESP_LOGD(MAIN_TASK_TAG, "Encoder data sent: %d bytes", result);
+            }
+        }
+        
+        // 发送摇杆数据
+        if (bits & BIT_EVENT_JOYSTICK_UPDATED) {
+            char buffer[256];
+            snprintf(buffer, sizeof(buffer), 
+                    "JOYSTICK:{\"x\":%d,\"y\":%d,\"mag\":%.2f,\"ang\":%.1f,\"btn\":%s,\"dz\":%s,\"ts\":%lu}\n",
+                    system_state.joystick_data.x,
+                    system_state.joystick_data.y,
+                    system_state.joystick_data.magnitude,
+                    system_state.joystick_data.angle,
+                    system_state.joystick_data.button_pressed ? "true" : "false",
+                    system_state.joystick_data.in_deadzone ? "true" : "false",
+                    system_state.joystick_data.timestamp);
+            
+            int result = network_send_string(buffer);
+            if (result > 0) {
+                ESP_LOGD(MAIN_TASK_TAG, "Joystick data sent: %d bytes", result);
+            }
+        }
+        
+        // 短暂延时避免过于频繁的网络发送
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+// 保留简化的回调函数用于调试
+extern "C" void encoder_position_changed(int32_t position, int32_t delta) {
+    ESP_LOGD(MAIN_TASK_TAG, "编码器位置: %ld, 变化量: %ld", position, delta);
 }
 
 extern "C" void encoder_button_changed(bool pressed) {
-    ESP_LOGI(MAIN_TASK_TAG, "编码器按钮: %s", pressed ? "按下" : "释放");
-    
-    if (is_wifi_connected() && is_network_connected()) {
-        char buffer[32];
-        snprintf(buffer, sizeof(buffer), "ENC_BTN:%s\n", pressed ? "1" : "0");
-        network_send_string(buffer);
-    }
+    ESP_LOGD(MAIN_TASK_TAG, "编码器按钮: %s", pressed ? "按下" : "释放");
 }
 
-// 摇杆数据回调函数
+// 摇杆数据回调函数（简化版，用于调试）
 extern "C" void joystick_data_changed(const joystick_data_t* data) {
     if (!data->in_deadzone) {
-        ESP_LOGI(MAIN_TASK_TAG, "摇杆位置: X=%d, Y=%d, 幅度=%.2f, 角度=%.1f°", 
+        ESP_LOGD(MAIN_TASK_TAG, "摇杆位置: X=%d, Y=%d, 幅度=%.2f, 角度=%.1f°", 
                  data->x, data->y, data->magnitude, data->angle);
-        
-        // 通过网络发送摇杆数据
-        if (is_wifi_connected() && is_network_connected()) {
-            char buffer[64];
-            snprintf(buffer, sizeof(buffer), "JOYSTICK:%d,%d,%.2f,%.1f\n", 
-                     data->x, data->y, data->magnitude, data->angle);
-            network_send_string(buffer);
-        }
     }
 }
 
 extern "C" void joystick_button_changed(bool pressed) {
-    ESP_LOGI(MAIN_TASK_TAG, "摇杆按钮: %s", pressed ? "按下" : "释放");
-    
-    if (is_wifi_connected() && is_network_connected()) {
-        char buffer[32];
-        snprintf(buffer, sizeof(buffer), "JOY_BTN:%s\n", pressed ? "1" : "0");
-        network_send_string(buffer);
-    }
+    ESP_LOGD(MAIN_TASK_TAG, "摇杆按钮: %s", pressed ? "按下" : "释放");
 }
 
 void setup() {
@@ -79,6 +125,13 @@ void setup() {
     vTaskDelay(pdMS_TO_TICKS(1000)); 
 
     ESP_LOGI(MAIN_TASK_TAG, "ESP32 WiFi Task with Arduino");
+
+    // 初始化DataPlatform数据服务层
+    if (data_service_init() != pdPASS) {
+        ESP_LOGE(MAIN_TASK_TAG, "Failed to initialize data service");
+        return;
+    }
+    ESP_LOGI(MAIN_TASK_TAG, "DataPlatform initialized successfully");
 
     // 创建 uart_parser 任务
     if (xTaskCreate(uart_parser_task, "UART_Parser_Task", 4096, NULL, tskIDLE_PRIORITY + 2, NULL) != pdPASS) {
@@ -107,6 +160,13 @@ void setup() {
     // Start WiFi Task
     if (wifi_task_start(&wifi_config) != pdPASS) {
         ESP_LOGE(MAIN_TASK_TAG, "Failed to start WiFi task");
+    }
+
+    // 创建数据发布任务
+    if (xTaskCreate(data_publisher_task, "Data_Publisher_Task", 4096, NULL, tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
+        ESP_LOGE(MAIN_TASK_TAG, "Failed to create data publisher task");
+    } else {
+        ESP_LOGI(MAIN_TASK_TAG, "Data publisher task created successfully");
     }
 
     // 初始化编码器
