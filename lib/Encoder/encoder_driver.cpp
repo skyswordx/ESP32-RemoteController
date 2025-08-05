@@ -4,7 +4,6 @@
 static const char* TAG = "ENCODER";
 
 // 全局变量
-static RotaryEncoder* rotary_encoder = nullptr;
 static ESP32Encoder esp32_encoder;
 static encoder_config_t encoder_config;
 static encoder_callback_t position_callback = nullptr;
@@ -25,10 +24,7 @@ esp_err_t encoder_init(const encoder_config_t* config) {
     // 保存配置
     encoder_config = *config;
 
-    // 初始化 RotaryEncoder 库
-    rotary_encoder = new RotaryEncoder(config->pin_a, config->pin_b, RotaryEncoder::LatchMode::TWO03);
-    
-    // 初始化 ESP32Encoder 库作为备选
+    // 初始化 ESP32Encoder 库
     ESP32Encoder::useInternalWeakPullResistors = config->use_pullup ? UP : NONE;
     esp32_encoder.attachHalfQuad(config->pin_a, config->pin_b);
     esp32_encoder.setCount(0);
@@ -46,17 +42,13 @@ esp_err_t encoder_init(const encoder_config_t* config) {
 
 // 获取编码器位置
 int32_t encoder_get_position(void) {
-    if (rotary_encoder) {
-        return rotary_encoder->getPosition();
-    }
-    return esp32_encoder.getCount() / 4; // ESP32Encoder 通常有4倍分辨率
+    // ESP32Encoder 计数需要根据 steps_per_notch 进行调整
+    int32_t raw_count = esp32_encoder.getCount();
+    return raw_count / encoder_config.steps_per_notch;
 }
 
 // 重置编码器位置
 void encoder_reset_position(void) {
-    if (rotary_encoder) {
-        rotary_encoder->setPosition(0);
-    }
     esp32_encoder.setCount(0);
     last_position = 0;
 }
@@ -72,11 +64,9 @@ void encoder_set_button_callback(encoder_button_callback_t callback) {
 
 // 编码器任务处理
 void encoder_task(void) {
-    // 更新编码器状态
-    if (rotary_encoder) {
-        rotary_encoder->tick();
-    }
-
+    // ESP32Encoder 不需要像 RotaryEncoder 那样调用 tick()
+    // 它使用中断自动处理编码器信号
+    
     // 检查位置变化
     int32_t current_position = encoder_get_position();
     if (current_position != last_position) {

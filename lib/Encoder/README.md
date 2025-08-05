@@ -9,7 +9,8 @@
 - 自动防抖处理
 - 位置变化回调功能
 - 支持内部上拉电阻
-- 兼容多种编码器库
+- 基于ESP32硬件中断的高效处理
+- 自动处理编码器信号，无需轮询
 
 ## 硬件连接
 
@@ -123,14 +124,17 @@ bool button_pressed = encoder_get_button_state();
 
 ## 注意事项
 
-1. 需要在主循环中定期调用 `encoder_task()` 以确保编码器正常工作
-2. 编码器的电气特性可能因型号而异，需要根据实际情况调整 `steps_per_notch` 参数
-3. 建议使用内部上拉电阻以提高信号稳定性
-4. 按钮防抖时间设置为50ms，可根据需要在源码中调整
+1. 需要在主循环中定期调用 `encoder_task()` 以检查位置变化和按钮状态
+2. ESP32Encoder 使用硬件中断处理编码器信号，提供更高的精度和可靠性
+3. `steps_per_notch` 参数需要根据编码器的实际规格进行调整：
+   - 常见值：1, 2, 4（每个物理刻度的电气脉冲数）
+   - 可以通过测试确定正确的值
+4. 建议使用内部上拉电阻以提高信号稳定性
+5. 按钮防抖时间设置为50ms，可根据需要在源码中调整
+6. ESP32Encoder 库会自动处理编码器的四倍频，无需手动处理
 
 ## 依赖库
 
-- `mathertel/RotaryEncoder` - 主要编码器处理库
-- `madhephaestus/ESP32Encoder` - ESP32优化的编码器库
+- `madhephaestus/ESP32Encoder` - ESP32优化的编码器库，使用硬件中断
 
-这些库已在 `platformio.ini` 中配置，PlatformIO会自动下载安装。
+这个库已在 `platformio.ini` 中配置，PlatformIO会自动下载安装。

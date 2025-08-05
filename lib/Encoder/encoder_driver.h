@@ -2,7 +2,6 @@
 #define ENCODER_DRIVER_H
 
 #include "Arduino.h"
-#include "RotaryEncoder.h"
 #include "ESP32Encoder.h"
 
 #ifdef __cplusplus
