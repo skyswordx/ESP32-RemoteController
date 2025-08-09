@@ -4,6 +4,7 @@
 #include "wifi_task.h"
 #include "esp_log.h"
 #include <string.h>
+#include "serial_servo.h"  // 添加SerialServo库
 
 // 包含 uart_parser 模块的头文件
 extern "C" {
@@ -18,6 +19,16 @@ extern "C" {
 // Example WiFi credentials
 #define EXAMPLE_ESP_WIFI_SSID      "opti_track_xiaomi"
 #define EXAMPLE_ESP_WIFI_PASS      "sysu_opti_track"
+
+// 串口舵机配置
+#define SERVO_UART_NUM     2         // 使用Serial2
+#define SERVO_RX_PIN       16        // 舵机串口RX引脚
+#define SERVO_TX_PIN       17        // 舵机串口TX引脚
+#define SERVO_BAUD_RATE    115200    // 舵机串口波特率
+#define SERVO_ID           1         // 默认舵机ID
+
+// 创建串口舵机对象
+SerialServo* servo_controller = nullptr;
 
 // 为 uart_parser 模块实现串口发送函数
 // uart_parser.c 中的 uart_parser_put_string 是弱函数，我们在这里提供强实现
@@ -157,6 +168,75 @@ extern "C" void my_wifi_task(void* parameter) {
     vTaskDelete(NULL);
 }
 
+// FreeRTOS 串口舵机任务
+extern "C" void my_servo_task(void* parameter) {
+    ESP_LOGI(MAIN_TASK_TAG, "Servo RTOS task started");
+    
+    static uint32_t servo_demo_step = 0;
+    static uint32_t last_servo_time = 0;
+    const uint32_t SERVO_DEMO_INTERVAL = 3000; // 3秒间隔
+    
+    while (1) {
+        uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+        
+        // 每3秒执行一次舵机演示动作
+        if (current_time - last_servo_time >= SERVO_DEMO_INTERVAL) {
+            if (servo_controller != nullptr) {
+                float target_angle = 0;
+                
+                switch (servo_demo_step % 4) {
+                    case 0:
+                        target_angle = 0;     // 0度
+                        ESP_LOGI(MAIN_TASK_TAG, "Moving servo to 0 degrees");
+                        break;
+                    case 1:
+                        target_angle = 20;    // 20度
+                        ESP_LOGI(MAIN_TASK_TAG, "Moving servo to 20 degrees");
+                        break;
+                    case 2:
+                        target_angle = 40;   // 40度
+                        ESP_LOGI(MAIN_TASK_TAG, "Moving servo to 40 degrees");
+                        break;
+                    case 3:
+                        target_angle = 60;    // 回到60度
+                        ESP_LOGI(MAIN_TASK_TAG, "Moving servo to 60 degrees");
+                        break;
+                }
+                
+                // 控制舵机移动，1000ms执行时间
+                t_FuncRet result = servo_controller->move_servo_immediate(SERVO_ID, target_angle, 1000);
+                if (result == Operation_Success) {
+                    ESP_LOGD(MAIN_TASK_TAG, "Servo command sent successfully");
+                } else {
+                    ESP_LOGW(MAIN_TASK_TAG, "Failed to send servo command");
+                }
+                
+                // 读取舵机状态信息
+                float current_position = 0;
+                if (servo_controller->read_servo_position(SERVO_ID, current_position) == Operation_Success) {
+                    ESP_LOGD(MAIN_TASK_TAG, "Servo current position: %.1f degrees", current_position);
+                }
+                
+                int temperature = 0;
+                if (servo_controller->read_servo_temp(SERVO_ID, temperature) == Operation_Success) {
+                    ESP_LOGD(MAIN_TASK_TAG, "Servo temperature: %d°C", temperature);
+                }
+                
+                float voltage = 0;
+                if (servo_controller->read_servo_voltage(SERVO_ID, voltage) == Operation_Success) {
+                    ESP_LOGD(MAIN_TASK_TAG, "Servo voltage: %.2fV", voltage);
+                }
+            }
+            
+            servo_demo_step++;
+            last_servo_time = current_time;
+        }
+        
+        // 任务延时
+        vTaskDelay(pdMS_TO_TICKS(100)); // 100ms间隔
+    }
+}
+
 void setup() {
     Serial.begin(115200);
     // 稍作延时，等待串口监视器连接
@@ -176,101 +256,273 @@ void setup() {
         ESP_LOGE(MAIN_TASK_TAG, "Failed to create UART Parser task");
     }
 
-    // Configure WiFi Task for STA mode with TCP client
-    wifi_task_config_t wifi_config;
-    memset(&wifi_config, 0, sizeof(wifi_task_config_t));
-
-    wifi_config.wifi_mode = WIFI_STA;
-    strncpy(wifi_config.ssid, EXAMPLE_ESP_WIFI_SSID, sizeof(wifi_config.ssid) - 1);
-    strncpy(wifi_config.password, EXAMPLE_ESP_WIFI_PASS, sizeof(wifi_config.password) - 1);
+    // 初始化串口舵机
+    ESP_LOGI(MAIN_TASK_TAG, "Initializing Serial Servo...");
     
-    wifi_config.power_save = false; // Disable power saving for best performance
-    wifi_config.tx_power = WIFI_POWER_19_5dBm; // Set max power
-    wifi_config.sta_connect_timeout_ms = 15000; // 15 seconds timeout
-
-    // Configure network as TCP client
-    wifi_config.network_config.protocol = NETWORK_PROTOCOL_TCP_CLIENT;
-    strncpy(wifi_config.network_config.remote_host, "192.168.31.136", sizeof(wifi_config.network_config.remote_host) - 1); // 通常手机热点的网关IP
-    wifi_config.network_config.remote_port = 2233; // 手机端TCP服务器端口，您可以根据实际情况修改
-    wifi_config.network_config.auto_connect = true; // WiFi连接成功后自动开始TCP连接
-    wifi_config.network_config.connect_timeout_ms = 10000; // 10 seconds timeout for TCP connection
-
-    // 初始化 WiFi 配置
-    if (wifi_init_config(&wifi_config) != pdPASS) {
-        ESP_LOGE(MAIN_TASK_TAG, "Failed to initialize WiFi config");
+    // 初始化Serial2用于舵机通信
+    Serial2.begin(SERVO_BAUD_RATE, SERIAL_8N1, SERVO_RX_PIN, SERVO_TX_PIN);
+    ESP_LOGI(MAIN_TASK_TAG, "Serial2 initialized: Baud=%d, RX=%d, TX=%d", 
+             SERVO_BAUD_RATE, SERVO_RX_PIN, SERVO_TX_PIN);
+    
+    // 创建舵机控制对象
+    servo_controller = new SerialServo(Serial2);
+    if (servo_controller == nullptr) {
+        ESP_LOGE(MAIN_TASK_TAG, "Failed to create servo controller");
     } else {
-        // 创建 WiFi RTOS 任务
-        if (xTaskCreate(my_wifi_task, "WiFi_Task", 4096, NULL, tskIDLE_PRIORITY + 2, NULL) != pdPASS) {
-            ESP_LOGE(MAIN_TASK_TAG, "Failed to create WiFi RTOS task");
+        // 初始化舵机串口
+        if (servo_controller->begin(SERVO_BAUD_RATE) == Operation_Success) {
+            ESP_LOGI(MAIN_TASK_TAG, "Servo controller initialized successfully");
+            
+            // ========== 舵机初始化测试和诊断 ==========
+            ESP_LOGI(MAIN_TASK_TAG, "Starting servo initialization tests...");
+            
+            // 延时确保舵机完全启动
+            vTaskDelay(pdMS_TO_TICKS(500));
+            
+            // 1. 测试舵机连接和基本通信
+            float test_position = 0;
+            if (servo_controller->read_servo_position(SERVO_ID, test_position) == Operation_Success) {
+                ESP_LOGI(MAIN_TASK_TAG, "✓ Servo ID %d connected, current position: %.1f degrees", 
+                         SERVO_ID, test_position);
+            } else {
+                ESP_LOGE(MAIN_TASK_TAG, "✗ Cannot read servo position - communication failed!");
+                return; // 通信失败则退出
+            }
+            
+            // 2. 检查并重置舵机工作模式（关键步骤！）
+            ESP_LOGI(MAIN_TASK_TAG, "Checking and resetting servo working mode...");
+            
+            // 读取当前工作模式
+            int current_mode = 0;
+            int current_speed = 0;
+            if (servo_controller->get_servo_mode_and_speed(SERVO_ID, current_mode, current_speed) == Operation_Success) {
+                ESP_LOGI(MAIN_TASK_TAG, "✓ Current servo mode: %s (%d), speed: %d", 
+                         (current_mode == 0) ? "SERVO_MODE" : "MOTOR_MODE", current_mode, current_speed);
+                
+                // 如果是Motor模式，强制切换回Servo模式
+                if (current_mode == 1) {
+                    ESP_LOGW(MAIN_TASK_TAG, "⚠ Servo is in MOTOR mode, switching to SERVO mode...");
+                    if (servo_controller->set_servo_mode_and_speed(SERVO_ID, 0, 0) == Operation_Success) {
+                        ESP_LOGI(MAIN_TASK_TAG, "✓ Successfully switched to SERVO mode");
+                        vTaskDelay(pdMS_TO_TICKS(300)); // 等待模式切换完成
+                        
+                        // 验证模式切换
+                        if (servo_controller->get_servo_mode_and_speed(SERVO_ID, current_mode, current_speed) == Operation_Success) {
+                            ESP_LOGI(MAIN_TASK_TAG, "✓ Verified mode: %s (%d)", 
+                                     (current_mode == 0) ? "SERVO_MODE" : "MOTOR_MODE", current_mode);
+                            if (current_mode != 0) {
+                                ESP_LOGE(MAIN_TASK_TAG, "✗ Failed to switch to SERVO mode!");
+                                return;
+                            }
+                        }
+                    } else {
+                        ESP_LOGE(MAIN_TASK_TAG, "✗ Failed to switch servo to SERVO mode");
+                        return;
+                    }
+                }
+            } else {
+                ESP_LOGW(MAIN_TASK_TAG, "✗ Cannot read servo mode, assuming SERVO mode and continuing...");
+            }
+            
+            // 3. 读取舵机状态信息
+            int temperature = 0;
+            if (servo_controller->read_servo_temp(SERVO_ID, temperature) == Operation_Success) {
+                ESP_LOGI(MAIN_TASK_TAG, "✓ Servo temperature: %d°C", temperature);
+            } else {
+                ESP_LOGW(MAIN_TASK_TAG, "✗ Cannot read servo temperature");
+            }
+            
+            float voltage = 0;
+            if (servo_controller->read_servo_voltage(SERVO_ID, voltage) == Operation_Success) {
+                ESP_LOGI(MAIN_TASK_TAG, "✓ Servo voltage: %.2fV", voltage);
+            } else {
+                ESP_LOGW(MAIN_TASK_TAG, "✗ Cannot read servo voltage");
+            }
+            
+            // 4. 检查舵机电机负载状态
+            bool load_status = false;
+            if (servo_controller->get_servo_motor_load_status(SERVO_ID, load_status) == Operation_Success) {
+                ESP_LOGI(MAIN_TASK_TAG, "✓ Servo motor load status: %s (%s)", 
+                         load_status ? "LOADED" : "UNLOADED", load_status ? "true" : "false");
+                
+                // 如果舵机处于卸载状态，尝试加载
+                if (!load_status) {
+                    ESP_LOGW(MAIN_TASK_TAG, "⚠ Servo is in UNLOADED state, attempting to load motor...");
+                    if (servo_controller->set_servo_motor_load(SERVO_ID, false) == Operation_Success) {
+                        ESP_LOGI(MAIN_TASK_TAG, "✓ Servo motor loaded successfully");
+                        vTaskDelay(pdMS_TO_TICKS(200)); // 等待加载完成
+                        
+                        // 再次检查状态
+                        if (servo_controller->get_servo_motor_load_status(SERVO_ID, load_status) == Operation_Success) {
+                            ESP_LOGI(MAIN_TASK_TAG, "✓ Verified motor load status: %s (%s)", 
+                                     load_status ? "LOADED" : "UNLOADED", load_status ? "true" : "false");
+                        }
+                    } else {
+                        ESP_LOGE(MAIN_TASK_TAG, "✗ Failed to load servo motor");
+                    }
+                }
+            } else {
+                ESP_LOGW(MAIN_TASK_TAG, "✗ Cannot read servo motor load status");
+            }
+            
+            // 5. 读取舵机LED告警状态
+            uint8_t led_alarm = 0;
+            if (servo_controller->get_servo_led_alarm(SERVO_ID, led_alarm) == Operation_Success) {
+                ESP_LOGI(MAIN_TASK_TAG, "✓ Servo LED alarm status: 0x%02X %s", 
+                         led_alarm, (led_alarm == 0) ? "(No alarm)" : "(Alarm detected!)");
+                if (led_alarm != 0) {
+                    ESP_LOGW(MAIN_TASK_TAG, "⚠ Servo alarm detected - check servo condition");
+                }
+            } else {
+                ESP_LOGW(MAIN_TASK_TAG, "✗ Cannot read servo LED alarm status");
+            }
+            
+            // 6. 执行小幅度测试移动
+            ESP_LOGI(MAIN_TASK_TAG, "Performing movement test...");
+            float initial_position = test_position;
+            float test_target = initial_position + 5.0f; // 向当前位置+5度移动
+            
+            ESP_LOGI(MAIN_TASK_TAG, "Testing movement: %.1f° → %.1f°", initial_position, test_target);
+            if (servo_controller->move_servo_immediate(SERVO_ID, test_target, 1000) == Operation_Success) {
+                ESP_LOGI(MAIN_TASK_TAG, "✓ Test movement command sent");
+                
+                // 等待移动完成
+                vTaskDelay(pdMS_TO_TICKS(1500));
+                
+                // 检查是否成功移动
+                float final_position = 0;
+                if (servo_controller->read_servo_position(SERVO_ID, final_position) == Operation_Success) {
+                    float movement_diff = fabs(final_position - initial_position);
+                    ESP_LOGI(MAIN_TASK_TAG, "Position after test move: %.1f° (moved %.1f°)", 
+                             final_position, movement_diff);
+                    
+                    if (movement_diff > 1.0f) {
+                        ESP_LOGI(MAIN_TASK_TAG, "✓ Servo movement test PASSED - servo is responsive");
+                    } else {
+                        ESP_LOGW(MAIN_TASK_TAG, "⚠ Servo movement test FAILED - position didn't change significantly");
+                        ESP_LOGW(MAIN_TASK_TAG, "   Possible causes: motor unloaded, mechanical obstruction, or insufficient torque");
+                    }
+                } else {
+                    ESP_LOGW(MAIN_TASK_TAG, "✗ Cannot verify movement - position read failed");
+                }
+                
+                // 返回初始位置
+                ESP_LOGI(MAIN_TASK_TAG, "Returning to initial position: %.1f°", initial_position);
+                servo_controller->move_servo_immediate(SERVO_ID, initial_position, 1000);
+                vTaskDelay(pdMS_TO_TICKS(1000));
+            } else {
+                ESP_LOGE(MAIN_TASK_TAG, "✗ Test movement command failed");
+            }
+            
+            ESP_LOGI(MAIN_TASK_TAG, "========== Servo initialization tests completed ==========");
+            
+            // 创建舵机任务（测试完成后再创建任务）
+            if (xTaskCreate(my_servo_task, "Servo_Task", 3072, NULL, tskIDLE_PRIORITY + 2, NULL) != pdPASS) {
+                ESP_LOGE(MAIN_TASK_TAG, "Failed to create servo RTOS task");
+            } else {
+                ESP_LOGI(MAIN_TASK_TAG, "Servo RTOS task created successfully");
+            }
+            
         } else {
-            ESP_LOGI(MAIN_TASK_TAG, "WiFi RTOS task created successfully");
+            ESP_LOGE(MAIN_TASK_TAG, "Failed to initialize servo controller");
         }
     }
 
-    // 创建数据发布任务
-    if (xTaskCreate(data_publisher_task, "Data_Publisher_Task", 4096, NULL, tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
-        ESP_LOGE(MAIN_TASK_TAG, "Failed to create data publisher task");
-    } else {
-        ESP_LOGI(MAIN_TASK_TAG, "Data publisher task created successfully");
-    }
+    // Configure WiFi Task for STA mode with TCP client
+    // wifi_task_config_t wifi_config;
+    // memset(&wifi_config, 0, sizeof(wifi_task_config_t));
+
+    // wifi_config.wifi_mode = WIFI_STA;
+    // strncpy(wifi_config.ssid, EXAMPLE_ESP_WIFI_SSID, sizeof(wifi_config.ssid) - 1);
+    // strncpy(wifi_config.password, EXAMPLE_ESP_WIFI_PASS, sizeof(wifi_config.password) - 1);
+    
+    // wifi_config.power_save = false; // Disable power saving for best performance
+    // wifi_config.tx_power = WIFI_POWER_19_5dBm; // Set max power
+    // wifi_config.sta_connect_timeout_ms = 15000; // 15 seconds timeout
+
+    // // Configure network as TCP client
+    // wifi_config.network_config.protocol = NETWORK_PROTOCOL_TCP_CLIENT;
+    // strncpy(wifi_config.network_config.remote_host, "192.168.31.136", sizeof(wifi_config.network_config.remote_host) - 1); // 通常手机热点的网关IP
+    // wifi_config.network_config.remote_port = 2233; // 手机端TCP服务器端口，您可以根据实际情况修改
+    // wifi_config.network_config.auto_connect = true; // WiFi连接成功后自动开始TCP连接
+    // wifi_config.network_config.connect_timeout_ms = 10000; // 10 seconds timeout for TCP connection
+
+    // // 初始化 WiFi 配置
+    // if (wifi_init_config(&wifi_config) != pdPASS) {
+    //     ESP_LOGE(MAIN_TASK_TAG, "Failed to initialize WiFi config");
+    // } else {
+    //     // 创建 WiFi RTOS 任务
+    //     if (xTaskCreate(my_wifi_task, "WiFi_Task", 4096, NULL, tskIDLE_PRIORITY + 2, NULL) != pdPASS) {
+    //         ESP_LOGE(MAIN_TASK_TAG, "Failed to create WiFi RTOS task");
+    //     } else {
+    //         ESP_LOGI(MAIN_TASK_TAG, "WiFi RTOS task created successfully");
+    //     }
+    // }
+
+    // // 创建数据发布任务
+    // if (xTaskCreate(data_publisher_task, "Data_Publisher_Task", 4096, NULL, tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
+    //     ESP_LOGE(MAIN_TASK_TAG, "Failed to create data publisher task");
+    // } else {
+    //     ESP_LOGI(MAIN_TASK_TAG, "Data publisher task created successfully");
+    // }
 
     // // 初始化编码器
-    encoder_config_t encoder_config = {
-        .pin_a = 34,              // 编码器A相引脚
-        .pin_b = 35,              // 编码器B相引脚
-        .pin_button = 17,         // 编码器按钮引脚
-        .use_pullup = true,      // 使用内部上拉电阻
-        .steps_per_notch = 4     // 每个刻度4个步数（根据编码器型号调整）
-    };
+    // encoder_config_t encoder_config = {
+    //     .pin_a = 34,              // 编码器A相引脚
+    //     .pin_b = 35,              // 编码器B相引脚
+    //     .pin_button = 17,         // 编码器按钮引脚
+    //     .use_pullup = true,      // 使用内部上拉电阻
+    //     .steps_per_notch = 4     // 每个刻度4个步数（根据编码器型号调整）
+    // };
     
-    if (encoder_init(&encoder_config) == ESP_OK) {
-        ESP_LOGI(MAIN_TASK_TAG, "编码器初始化成功");
-        // encoder_set_callback(encoder_position_changed);
-        // encoder_set_button_callback(encoder_button_changed);
+    // if (encoder_init(&encoder_config) == ESP_OK) {
+    //     ESP_LOGI(MAIN_TASK_TAG, "编码器初始化成功");
+    //     // encoder_set_callback(encoder_position_changed);
+    //     // encoder_set_button_callback(encoder_button_changed);
         
-        // 创建编码器 RTOS 任务
-        if (xTaskCreate(my_encoder_task, "Encoder_Task", 2048, NULL, tskIDLE_PRIORITY + 3, NULL) != pdPASS) {
-            ESP_LOGE(MAIN_TASK_TAG, "Failed to create encoder RTOS task");
-        } else {
-            ESP_LOGI(MAIN_TASK_TAG, "Encoder RTOS task created successfully");
-        }
-    } else {
-        ESP_LOGE(MAIN_TASK_TAG, "编码器初始化失败");
-    }
+    //     // 创建编码器 RTOS 任务
+    //     if (xTaskCreate(my_encoder_task, "Encoder_Task", 2048, NULL, tskIDLE_PRIORITY + 3, NULL) != pdPASS) {
+    //         ESP_LOGE(MAIN_TASK_TAG, "Failed to create encoder RTOS task");
+    //     } else {
+    //         ESP_LOGI(MAIN_TASK_TAG, "Encoder RTOS task created successfully");
+    //     }
+    // } else {
+    //     ESP_LOGE(MAIN_TASK_TAG, "编码器初始化失败");
+    // }
 
     // 初始化摇杆
-    joystick_config_t joystick_config = {
-        .pin_x = 33,             // X轴ADC引脚 (A0)
-        .pin_y = 32,             // Y轴ADC引脚 (A3)
-        .pin_button = 12,        // 摇杆按钮引脚
-        .use_pullup = true,      // 按钮使用内部上拉
-        .deadzone = 50,          // 死区大小
-        .invert_x = false,       // X轴不反转
-        .invert_y = true,        // Y轴反转（根据摇杆安装方向调整）
-        .center_x = 0,           // 自动检测中心值
-        .center_y = 0            // 自动检测中心值
-    };
+    // joystick_config_t joystick_config = {
+    //     .pin_x = 33,             // X轴ADC引脚 (A0)
+    //     .pin_y = 32,             // Y轴ADC引脚 (A3)
+    //     .pin_button = 12,        // 摇杆按钮引脚
+    //     .use_pullup = true,      // 按钮使用内部上拉
+    //     .deadzone = 50,          // 死区大小
+    //     .invert_x = false,       // X轴不反转
+    //     .invert_y = true,        // Y轴反转（根据摇杆安装方向调整）
+    //     .center_x = 0,           // 自动检测中心值
+    //     .center_y = 0            // 自动检测中心值
+    // };
     
-    if (joystick_init(&joystick_config) == ESP_OK) {
-        ESP_LOGI(MAIN_TASK_TAG, "摇杆初始化成功");
+    // if (joystick_init(&joystick_config) == ESP_OK) {
+    //     ESP_LOGI(MAIN_TASK_TAG, "摇杆初始化成功");
         
-        // 等待一下再校准中心位置
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        ESP_LOGI(MAIN_TASK_TAG, "正在校准摇杆中心位置...");
-        joystick_calibrate_center();
+    //     // 等待一下再校准中心位置
+    //     vTaskDelay(pdMS_TO_TICKS(1000));
+    //     ESP_LOGI(MAIN_TASK_TAG, "正在校准摇杆中心位置...");
+    //     joystick_calibrate_center();
         
-        // joystick_set_callback(joystick_data_changed);
-        // joystick_set_button_callback(joystick_button_changed);
+    //     // joystick_set_callback(joystick_data_changed);
+    //     // joystick_set_button_callback(joystick_button_changed);
         
-        // 创建摇杆 RTOS 任务
-        if (xTaskCreate(my_joystick_task, "Joystick_Task", 2048, NULL, tskIDLE_PRIORITY + 3, NULL) != pdPASS) {
-            ESP_LOGE(MAIN_TASK_TAG, "Failed to create joystick RTOS task");
-        } else {
-            ESP_LOGI(MAIN_TASK_TAG, "Joystick RTOS task created successfully");
-        }
-    } else {
-        ESP_LOGE(MAIN_TASK_TAG, "摇杆初始化失败");
-    }
+    //     // 创建摇杆 RTOS 任务
+    //     if (xTaskCreate(my_joystick_task, "Joystick_Task", 2048, NULL, tskIDLE_PRIORITY + 3, NULL) != pdPASS) {
+    //         ESP_LOGE(MAIN_TASK_TAG, "Failed to create joystick RTOS task");
+    //     } else {
+    //         ESP_LOGI(MAIN_TASK_TAG, "Joystick RTOS task created successfully");
+    //     }
+    // } else {
+    //     ESP_LOGE(MAIN_TASK_TAG, "摇杆初始化失败");
+    // }
 }
 
 void loop() { /* 类似 defaultTask */
