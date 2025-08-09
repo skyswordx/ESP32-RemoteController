@@ -186,27 +186,27 @@ extern "C" void my_servo_task(void* parameter) {
                 
                 switch (servo_demo_step % 4) {
                     case 0:
-                        target_angle = 0;     // 0度
-                        ESP_LOGI(MAIN_TASK_TAG, "Moving servo to 0 degrees");
+                        target_angle = 100;     // 100度
+                        ESP_LOGI(MAIN_TASK_TAG, "Moving servo to 100 degrees");
                         break;
                     case 1:
-                        target_angle = 20;    // 20度
-                        ESP_LOGI(MAIN_TASK_TAG, "Moving servo to 20 degrees");
+                        target_angle = 120;    // 120度
+                        ESP_LOGI(MAIN_TASK_TAG, "Moving servo to 120 degrees");
                         break;
                     case 2:
-                        target_angle = 40;   // 40度
-                        ESP_LOGI(MAIN_TASK_TAG, "Moving servo to 40 degrees");
+                        target_angle = 140;   // 140度
+                        ESP_LOGI(MAIN_TASK_TAG, "Moving servo to 140 degrees");
                         break;
                     case 3:
-                        target_angle = 60;    // 回到60度
-                        ESP_LOGI(MAIN_TASK_TAG, "Moving servo to 60 degrees");
+                        target_angle = 160;    // 回到160度
+                        ESP_LOGI(MAIN_TASK_TAG, "Moving servo to 160 degrees");
                         break;
                 }
-                
-                // 控制舵机移动，1000ms执行时间
-                t_FuncRet result = servo_controller->move_servo_immediate(SERVO_ID, target_angle, 1000);
+
+                // 控制舵机移动，增加执行时间到4000ms
+                t_FuncRet result = servo_controller->move_servo_immediate(SERVO_ID, target_angle, 4000);
                 if (result == Operation_Success) {
-                    ESP_LOGD(MAIN_TASK_TAG, "Servo command sent successfully");
+                    ESP_LOGD(MAIN_TASK_TAG, "Servo command sent successfully (2000ms execution time)");
                 } else {
                     ESP_LOGW(MAIN_TASK_TAG, "Failed to send servo command");
                 }
@@ -371,23 +371,39 @@ void setup() {
                 ESP_LOGI(MAIN_TASK_TAG, "✓ Servo LED alarm status: 0x%02X %s", 
                          led_alarm, (led_alarm == 0) ? "(No alarm)" : "(Alarm detected!)");
                 if (led_alarm != 0) {
-                    ESP_LOGW(MAIN_TASK_TAG, "⚠ Servo alarm detected - check servo condition");
+                    ESP_LOGW(MAIN_TASK_TAG, "⚠ Servo alarm detected - trying to clear alarm...");
+                    
+                    // 尝试清除告警（设置为无告警状态）
+                    if (servo_controller->set_servo_led_alarm(SERVO_ID, 0) == Operation_Success) {
+                        ESP_LOGI(MAIN_TASK_TAG, "✓ Alarm cleared successfully");
+                        vTaskDelay(pdMS_TO_TICKS(200));
+                        
+                        // 再次检查告警状态
+                        if (servo_controller->get_servo_led_alarm(SERVO_ID, led_alarm) == Operation_Success) {
+                            ESP_LOGI(MAIN_TASK_TAG, "✓ Verified alarm status: 0x%02X %s", 
+                                     led_alarm, (led_alarm == 0) ? "(No alarm)" : "(Still has alarm)");
+                        }
+                    } else {
+                        ESP_LOGW(MAIN_TASK_TAG, "✗ Failed to clear servo alarm");
+                    }
                 }
             } else {
                 ESP_LOGW(MAIN_TASK_TAG, "✗ Cannot read servo LED alarm status");
             }
             
-            // 6. 执行小幅度测试移动
-            ESP_LOGI(MAIN_TASK_TAG, "Performing movement test...");
+            // 6. 执行小幅度测试移动（增加执行时间）
+            ESP_LOGI(MAIN_TASK_TAG, "Performing movement test with extended time...");
             float initial_position = test_position;
-            float test_target = initial_position + 5.0f; // 向当前位置+5度移动
+            float test_target = initial_position + 10.0f; // 增加移动幅度到10度
             
             ESP_LOGI(MAIN_TASK_TAG, "Testing movement: %.1f° → %.1f°", initial_position, test_target);
-            if (servo_controller->move_servo_immediate(SERVO_ID, test_target, 1000) == Operation_Success) {
-                ESP_LOGI(MAIN_TASK_TAG, "✓ Test movement command sent");
+            // 增加执行时间到3000ms（3秒）
+            if (servo_controller->move_servo_immediate(SERVO_ID, test_target, 3000) == Operation_Success) {
+                ESP_LOGI(MAIN_TASK_TAG, "✓ Test movement command sent (3000ms execution time)");
                 
-                // 等待移动完成
-                vTaskDelay(pdMS_TO_TICKS(1500));
+                // 增加等待时间到4秒，确保舵机有足够时间完成移动
+                ESP_LOGI(MAIN_TASK_TAG, "Waiting 4 seconds for movement completion...");
+                vTaskDelay(pdMS_TO_TICKS(4000));
                 
                 // 检查是否成功移动
                 float final_position = 0;
@@ -396,20 +412,34 @@ void setup() {
                     ESP_LOGI(MAIN_TASK_TAG, "Position after test move: %.1f° (moved %.1f°)", 
                              final_position, movement_diff);
                     
-                    if (movement_diff > 1.0f) {
+                    if (movement_diff > 2.0f) {
                         ESP_LOGI(MAIN_TASK_TAG, "✓ Servo movement test PASSED - servo is responsive");
                     } else {
                         ESP_LOGW(MAIN_TASK_TAG, "⚠ Servo movement test FAILED - position didn't change significantly");
-                        ESP_LOGW(MAIN_TASK_TAG, "   Possible causes: motor unloaded, mechanical obstruction, or insufficient torque");
+                        ESP_LOGW(MAIN_TASK_TAG, "   Possible causes: alarm condition, mechanical obstruction, or power issues");
+                        
+                        // 尝试一个更大幅度的移动测试
+                        ESP_LOGI(MAIN_TASK_TAG, "Trying larger movement test: %.1f° → %.1f°", 
+                                 initial_position, initial_position + 20.0f);
+                        if (servo_controller->move_servo_immediate(SERVO_ID, initial_position + 20.0f, 5000) == Operation_Success) {
+                            vTaskDelay(pdMS_TO_TICKS(6000)); // 等待6秒
+                            
+                            float large_test_position = 0;
+                            if (servo_controller->read_servo_position(SERVO_ID, large_test_position) == Operation_Success) {
+                                float large_movement_diff = fabs(large_test_position - initial_position);
+                                ESP_LOGI(MAIN_TASK_TAG, "Large movement result: %.1f° (moved %.1f°)", 
+                                         large_test_position, large_movement_diff);
+                            }
+                        }
                     }
                 } else {
                     ESP_LOGW(MAIN_TASK_TAG, "✗ Cannot verify movement - position read failed");
                 }
                 
-                // 返回初始位置
+                // 返回初始位置（增加执行时间）
                 ESP_LOGI(MAIN_TASK_TAG, "Returning to initial position: %.1f°", initial_position);
-                servo_controller->move_servo_immediate(SERVO_ID, initial_position, 1000);
-                vTaskDelay(pdMS_TO_TICKS(1000));
+                servo_controller->move_servo_immediate(SERVO_ID, initial_position, 3000);
+                vTaskDelay(pdMS_TO_TICKS(4000)); // 等待4秒完成返回
             } else {
                 ESP_LOGE(MAIN_TASK_TAG, "✗ Test movement command failed");
             }
