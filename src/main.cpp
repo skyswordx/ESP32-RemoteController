@@ -16,8 +16,8 @@ extern "C" {
 #define MAIN_TASK_TAG "MAIN"
 
 // Example WiFi credentials
-#define EXAMPLE_ESP_WIFI_SSID      "misakaa"
-#define EXAMPLE_ESP_WIFI_PASS      "Gg114514"
+#define EXAMPLE_ESP_WIFI_SSID      "opti_track_xiaomi"
+#define EXAMPLE_ESP_WIFI_PASS      "sysu_opti_track"
 
 // 为 uart_parser 模块实现串口发送函数
 // uart_parser.c 中的 uart_parser_put_string 是弱函数，我们在这里提供强实现
@@ -152,7 +152,7 @@ void setup() {
 
     // Configure network as TCP client
     wifi_config.network_config.protocol = NETWORK_PROTOCOL_TCP_CLIENT;
-    strncpy(wifi_config.network_config.remote_host, "172.26.18.126", sizeof(wifi_config.network_config.remote_host) - 1); // 通常手机热点的网关IP
+    strncpy(wifi_config.network_config.remote_host, "172.19.3.190", sizeof(wifi_config.network_config.remote_host) - 1); // 通常手机热点的网关IP
     wifi_config.network_config.remote_port = 2233; // 手机端TCP服务器端口，您可以根据实际情况修改
     wifi_config.network_config.auto_connect = true; // WiFi连接成功后自动开始TCP连接
     wifi_config.network_config.connect_timeout_ms = 10000; // 10 seconds timeout for TCP connection
@@ -169,49 +169,49 @@ void setup() {
         ESP_LOGI(MAIN_TASK_TAG, "Data publisher task created successfully");
     }
 
-    // 初始化编码器
-    encoder_config_t encoder_config = {
-        .pin_a = 34,              // 编码器A相引脚
-        .pin_b = 35,              // 编码器B相引脚
-        .pin_button = 17,         // 编码器按钮引脚
-        .use_pullup = true,      // 使用内部上拉电阻
-        .steps_per_notch = 4     // 每个刻度4个步数（根据编码器型号调整）
-    };
+    // // 初始化编码器
+    // encoder_config_t encoder_config = {
+    //     .pin_a = 34,              // 编码器A相引脚
+    //     .pin_b = 35,              // 编码器B相引脚
+    //     .pin_button = 17,         // 编码器按钮引脚
+    //     .use_pullup = true,      // 使用内部上拉电阻
+    //     .steps_per_notch = 4     // 每个刻度4个步数（根据编码器型号调整）
+    // };
     
-    if (encoder_init(&encoder_config) == ESP_OK) {
-        ESP_LOGI(MAIN_TASK_TAG, "编码器初始化成功");
-        encoder_set_callback(encoder_position_changed);
-        encoder_set_button_callback(encoder_button_changed);
-    } else {
-        ESP_LOGE(MAIN_TASK_TAG, "编码器初始化失败");
-    }
+    // if (encoder_init(&encoder_config) == ESP_OK) {
+    //     ESP_LOGI(MAIN_TASK_TAG, "编码器初始化成功");
+    //     // encoder_set_callback(encoder_position_changed);
+    //     // encoder_set_button_callback(encoder_button_changed);
+    // } else {
+    //     ESP_LOGE(MAIN_TASK_TAG, "编码器初始化失败");
+    // }
 
     // 初始化摇杆
-    joystick_config_t joystick_config = {
-        .pin_x = 33,             // X轴ADC引脚 (A0)
-        .pin_y = 32,             // Y轴ADC引脚 (A3)
-        .pin_button = 12,        // 摇杆按钮引脚
-        .use_pullup = true,      // 按钮使用内部上拉
-        .deadzone = 50,          // 死区大小
-        .invert_x = false,       // X轴不反转
-        .invert_y = true,        // Y轴反转（根据摇杆安装方向调整）
-        .center_x = 0,           // 自动检测中心值
-        .center_y = 0            // 自动检测中心值
-    };
+    // joystick_config_t joystick_config = {
+    //     .pin_x = 33,             // X轴ADC引脚 (A0)
+    //     .pin_y = 32,             // Y轴ADC引脚 (A3)
+    //     .pin_button = 12,        // 摇杆按钮引脚
+    //     .use_pullup = true,      // 按钮使用内部上拉
+    //     .deadzone = 50,          // 死区大小
+    //     .invert_x = false,       // X轴不反转
+    //     .invert_y = true,        // Y轴反转（根据摇杆安装方向调整）
+    //     .center_x = 0,           // 自动检测中心值
+    //     .center_y = 0            // 自动检测中心值
+    // };
     
-    if (joystick_init(&joystick_config) == ESP_OK) {
-        ESP_LOGI(MAIN_TASK_TAG, "摇杆初始化成功");
+    // if (joystick_init(&joystick_config) == ESP_OK) {
+    //     ESP_LOGI(MAIN_TASK_TAG, "摇杆初始化成功");
         
-        // 等待一下再校准中心位置
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        ESP_LOGI(MAIN_TASK_TAG, "正在校准摇杆中心位置...");
-        joystick_calibrate_center();
+    //     // 等待一下再校准中心位置
+    //     vTaskDelay(pdMS_TO_TICKS(1000));
+    //     ESP_LOGI(MAIN_TASK_TAG, "正在校准摇杆中心位置...");
+    //     joystick_calibrate_center();
         
-        joystick_set_callback(joystick_data_changed);
-        joystick_set_button_callback(joystick_button_changed);
-    } else {
-        ESP_LOGE(MAIN_TASK_TAG, "摇杆初始化失败");
-    }
+    //     // joystick_set_callback(joystick_data_changed);
+    //     // joystick_set_button_callback(joystick_button_changed);
+    // } else {
+    //     ESP_LOGE(MAIN_TASK_TAG, "摇杆初始化失败");
+    // }
 }
 
 void loop() { /* 类似 defaultTask */
@@ -265,8 +265,8 @@ void loop() { /* 类似 defaultTask */
     }
     
     // 处理编码器和摇杆任务
-    encoder_task();
-    joystick_task();
+    // encoder_task();
+    // joystick_task();
     
     // 主循环可以执行其他低优先级或非阻塞的任务
     vTaskDelay(pdMS_TO_TICKS(10));
