@@ -15,19 +15,36 @@ static WiFiUDP* s_udp = NULL;
 static char s_network_info[256] = {0};
 
 // 网络任务处理函数声明
-static void network_task_handler(void *pvParameters);
+static void my_network_task(void *pvParameters);
 
-static void wifi_task_handler(void *pvParameters)
+// WiFi 初始化配置函数
+BaseType_t wifi_init_config(wifi_task_config_t *config)
 {
-    s_wifi_config = (wifi_task_config_t*)pvParameters;
+    if (config == NULL) {
+        return pdFAIL;
+    }
 
-    // A small delay to help prevent brownout if power supply is marginal
-    vTaskDelay(pdMS_TO_TICKS(200));
+    // Copy config to a static variable to be safely accessed by the handler
+    static wifi_task_config_t task_config;
+    memcpy(&task_config, config, sizeof(wifi_task_config_t));
+    s_wifi_config = &task_config;
 
-    ESP_LOGI(WIFI_TASK_TAG, "Starting WiFi Task (Arduino)...");
+    return pdPASS;
+}
 
-    // Set WiFi Mode
-    WiFi.mode(s_wifi_config->wifi_mode);
+// WiFi 处理函数 (不再是任务函数)
+void wifi_handler(void)
+{
+    static bool wifi_initialized = false;
+    
+    if (!wifi_initialized && s_wifi_config != NULL) {
+        // A small delay to help prevent brownout if power supply is marginal
+        vTaskDelay(pdMS_TO_TICKS(200));
+
+        ESP_LOGI(WIFI_TASK_TAG, "Starting WiFi initialization...");
+
+        // Set WiFi Mode
+        WiFi.mode(s_wifi_config->wifi_mode);
     ESP_LOGI(WIFI_TASK_TAG, "WiFi mode set to: %d", s_wifi_config->wifi_mode);
 
     // Set power save mode
@@ -71,37 +88,17 @@ static void wifi_task_handler(void *pvParameters)
         if (s_wifi_config->network_config.protocol != NETWORK_PROTOCOL_NONE && 
             s_wifi_config->network_config.auto_connect) {
             ESP_LOGI(WIFI_TASK_TAG, "Starting network task...");
-            if (xTaskCreate(network_task_handler, "network_task", 4096, NULL, 4, NULL) != pdPASS) {
+            if (xTaskCreate(my_network_task, "network_task", 4096, NULL, 4, NULL) != pdPASS) {
                 ESP_LOGE(WIFI_TASK_TAG, "Failed to create network task");
             }
         }
-    } else {
+        wifi_initialized = true;
+    } else if (!wifi_initialized) {
         s_is_connected = false;
         ESP_LOGW(WIFI_TASK_TAG, "WiFi connection failed or not in STA mode.");
+        wifi_initialized = true; // 标记已尝试初始化，避免重复
     }
-
-    // The task can now be deleted as WiFi connection is managed by the system
-    vTaskDelete(NULL);
-}
-
-BaseType_t wifi_task_start(wifi_task_config_t *config)
-{
-    if (config == NULL) {
-        return pdFAIL;
-    }
-
-    // Copy config to a static variable to be safely accessed by the task
-    static wifi_task_config_t task_config;
-    memcpy(&task_config, config, sizeof(wifi_task_config_t));
-
-    return xTaskCreate(
-        wifi_task_handler,
-        "wifi_task_arduino",
-        4096, // Stack size
-        (void*)&task_config,
-        5,    // Priority
-        NULL
-    );
+    } // 关闭 if (!wifi_initialized && s_wifi_config != NULL) 的大括号
 }
 
 bool is_wifi_connected(void)
@@ -112,7 +109,7 @@ bool is_wifi_connected(void)
 }
 
 // 网络任务处理函数
-static void network_task_handler(void *pvParameters)
+static void my_network_task(void *pvParameters)
 {
     ESP_LOGI(NETWORK_TASK_TAG, "Starting network task...");
     

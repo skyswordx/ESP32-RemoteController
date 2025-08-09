@@ -42,8 +42,8 @@ esp_err_t joystick_calibrate_center(void);
 void joystick_set_callback(joystick_callback_t callback);
 void joystick_set_button_callback(joystick_button_callback_t callback);
 
-// 摇杆任务处理（需要在主循环中调用）
-void joystick_task(void);
+// 摇杆处理函数（需要在任务中调用）
+void joystick_handler(void);
 
 // 获取按钮状态
 bool joystick_get_button_state(void);

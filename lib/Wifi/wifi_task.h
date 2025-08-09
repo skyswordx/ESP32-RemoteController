@@ -51,14 +51,19 @@ typedef struct {
 } wifi_task_config_t;
 
 /**
- * @brief 启动 WiFi 任务
+ * @brief 初始化 WiFi 配置 (不创建任务)
  *
  * @param config 指向 wifi_task_config_t 结构体的指针，包含 WiFi 任务的配置信息
  * @return 
- *      - pdPASS: 任务创建成功
- *      - 其他: 任务创建失败
+ *      - pdPASS: 配置成功
+ *      - 其他: 配置失败
  */
-BaseType_t wifi_task_start(wifi_task_config_t *config);
+BaseType_t wifi_init_config(wifi_task_config_t *config);
+
+/**
+ * @brief WiFi 处理函数 (在 RTOS 任务中调用)
+ */
+void wifi_handler(void);
 
 /**
  * @brief 获取 WiFi 连接状态 (仅在 STA 模式下有效)

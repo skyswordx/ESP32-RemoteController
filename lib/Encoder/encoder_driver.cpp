@@ -62,8 +62,8 @@ void encoder_set_button_callback(encoder_button_callback_t callback) {
     button_callback = callback;
 }
 
-// 编码器任务处理
-void encoder_task(void) {
+// 编码器处理函数
+void encoder_handler(void) {
     // ESP32Encoder 不需要像 RotaryEncoder 那样调用 tick()
     // 它使用中断自动处理编码器信号
     

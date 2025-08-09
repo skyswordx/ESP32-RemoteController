@@ -35,8 +35,8 @@ void encoder_reset_position(void);
 void encoder_set_callback(encoder_callback_t callback);
 void encoder_set_button_callback(encoder_button_callback_t callback);
 
-// 编码器任务处理（需要在主循环中调用）
-void encoder_task(void);
+// 编码器处理函数（需要在任务中调用）
+void encoder_handler(void);
 
 // 获取编码器按钮状态
 bool encoder_get_button_state(void);

@@ -124,8 +124,8 @@ void joystick_set_button_callback(joystick_button_callback_t callback) {
     button_callback = callback;
 }
 
-// 摇杆任务处理
-void joystick_task(void) {
+// 摇杆处理函数
+void joystick_handler(void) {
     static joystick_data_t last_data = {0};
     
     // 读取当前数据
