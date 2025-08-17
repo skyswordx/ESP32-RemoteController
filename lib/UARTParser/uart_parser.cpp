@@ -1,4 +1,5 @@
 #include "uart_parser.h"
+#include "servo_commands.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -132,6 +133,13 @@ static const command_t command_table[] = {
     {"network_config",     handle_network_config,     "network_config: 显示当前网络配置信息。"},
     {"network_send",       handle_network_send,       "network_send <message>: 通过网络发送消息。"},
     {"network_reconnect",  handle_network_reconnect,  "network_reconnect: 使用当前配置重新连接网络。"},
+    
+    /* 舵机控制命令 */
+    {"servo_status",       handle_servo_status,       "servo_status <servo_id>: 获取指定舵机的状态信息。"},
+    {"servo_load",         handle_servo_load,         "servo_load <servo_id> <0|1>: 设置舵机负载状态 (0=卸载, 1=加载)。"},
+    {"servo_mode",         handle_servo_mode,         "servo_mode <servo_id> <0|1>: 设置舵机工作模式 (0=舵机, 1=电机)。"},
+    {"servo_position",     handle_servo_position,     "servo_position <servo_id> <angle> <time_ms>: 舵机模式下控制位移角度和时间。"},
+    {"servo_speed",        handle_servo_speed,        "servo_speed <servo_id> <speed>: 电机模式下设置速度 (-1000到1000)。"},
     /* --- 您可以在此行下方添加您的新命令 --- */
     
 };

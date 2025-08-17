@@ -365,3 +365,195 @@ static void servo_task_function(void* parameter) {
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
+
+extern "C" {
+
+bool servo_get_status(uint8_t servo_id, servo_status_t *status) {
+    if (status == nullptr || !g_servo_initialized || g_servo_controller == nullptr) {
+        ESP_LOGE(SERVO_TASK_TAG, "Invalid parameters or servo not initialized");
+        return false;
+    }
+    
+    memset(status, 0, sizeof(servo_status_t));
+    status->servo_id = servo_id;
+    status->is_connected = g_servo_connected;
+    status->last_update_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    
+    if (!g_servo_connected) {
+        ESP_LOGW(SERVO_TASK_TAG, "Servo not connected, returning default status");
+        return true;
+    }
+    
+    // 读取当前位置
+    if (!servo_read_position(&status->current_position)) {
+        ESP_LOGW(SERVO_TASK_TAG, "Failed to read servo position");
+    }
+    
+    // 读取温度
+    if (!servo_read_temperature(&status->temperature)) {
+        ESP_LOGW(SERVO_TASK_TAG, "Failed to read servo temperature");
+    }
+    
+    // 读取电压
+    if (!servo_read_voltage(&status->voltage)) {
+        ESP_LOGW(SERVO_TASK_TAG, "Failed to read servo voltage");
+    }
+    
+    // 读取工作模式和负载状态 (需要SerialServo库支持)
+    // 这里暂时设置为默认值，具体实现需要根据SerialServo库的API
+    status->work_mode = SERVO_MODE_SERVO;
+    status->load_state = SERVO_LOAD_LOAD;
+    status->current_speed = 0;
+    
+    ESP_LOGI(SERVO_TASK_TAG, "Servo %d status: pos=%.1f°, temp=%d°C, volt=%.2fV", 
+             servo_id, status->current_position, status->temperature, status->voltage);
+    
+    return true;
+}
+
+bool servo_set_load_state(uint8_t servo_id, servo_load_state_t load_state) {
+    if (!g_servo_initialized || g_servo_controller == nullptr) {
+        ESP_LOGE(SERVO_TASK_TAG, "Servo not initialized");
+        return false;
+    }
+    
+    if (!g_servo_connected) {
+        ESP_LOGE(SERVO_TASK_TAG, "Servo not connected");
+        return false;
+    }
+    
+    bool success = false;
+    
+    try {
+        if (load_state == SERVO_LOAD_LOAD) {
+            success = (g_servo_controller->set_servo_motor_load(servo_id, false) == Operation_Success);
+            ESP_LOGI(SERVO_TASK_TAG, "Setting servo %d to LOAD state", servo_id);
+        } else {
+            success = (g_servo_controller->set_servo_motor_load(servo_id, true) == Operation_Success);
+            ESP_LOGI(SERVO_TASK_TAG, "Setting servo %d to UNLOAD state", servo_id);
+        }
+        
+        if (success) {
+            ESP_LOGI(SERVO_TASK_TAG, "Successfully changed load state for servo %d", servo_id);
+        } else {
+            ESP_LOGE(SERVO_TASK_TAG, "Failed to change load state for servo %d", servo_id);
+        }
+    } catch (...) {
+        ESP_LOGE(SERVO_TASK_TAG, "Exception occurred while setting load state");
+        success = false;
+    }
+    
+    return success;
+}
+
+bool servo_set_work_mode(uint8_t servo_id, servo_mode_t mode) {
+    if (!g_servo_initialized || g_servo_controller == nullptr) {
+        ESP_LOGE(SERVO_TASK_TAG, "Servo not initialized");
+        return false;
+    }
+    
+    if (!g_servo_connected) {
+        ESP_LOGE(SERVO_TASK_TAG, "Servo not connected");
+        return false;
+    }
+    
+    bool success = false;
+    
+    try {
+        if (mode == SERVO_MODE_SERVO) {
+            success = (g_servo_controller->set_servo_mode_and_speed(servo_id, 0, 0) == Operation_Success);
+            ESP_LOGI(SERVO_TASK_TAG, "Setting servo %d to SERVO mode", servo_id);
+        } else {
+            success = (g_servo_controller->set_servo_mode_and_speed(servo_id, 1, 0) == Operation_Success);
+            ESP_LOGI(SERVO_TASK_TAG, "Setting servo %d to MOTOR mode", servo_id);
+        }
+        
+        if (success) {
+            ESP_LOGI(SERVO_TASK_TAG, "Successfully changed work mode for servo %d", servo_id);
+        } else {
+            ESP_LOGE(SERVO_TASK_TAG, "Failed to change work mode for servo %d", servo_id);
+        }
+    } catch (...) {
+        ESP_LOGE(SERVO_TASK_TAG, "Exception occurred while setting work mode");
+        success = false;
+    }
+    
+    return success;
+}
+
+bool servo_control_position(uint8_t servo_id, float angle, uint32_t time_ms) {
+    if (!g_servo_initialized || g_servo_controller == nullptr) {
+        ESP_LOGE(SERVO_TASK_TAG, "Servo not initialized");
+        return false;
+    }
+    
+    if (!g_servo_connected) {
+        ESP_LOGE(SERVO_TASK_TAG, "Servo not connected");
+        return false;
+    }
+    
+    if (angle < 0 || angle > 240) {
+        ESP_LOGE(SERVO_TASK_TAG, "Invalid angle: %.1f (valid range: 0-240)", angle);
+        return false;
+    }
+    
+    if (time_ms < 20 || time_ms > 30000) {
+        ESP_LOGE(SERVO_TASK_TAG, "Invalid time: %lu ms (valid range: 20-30000)", time_ms);
+        return false;
+    }
+    
+    bool success = false;
+    
+    try {
+        // 在舵机模式下移动到指定位置
+        success = (g_servo_controller->move_servo_immediate(servo_id, angle, time_ms) == Operation_Success);
+        
+        if (success) {
+            ESP_LOGI(SERVO_TASK_TAG, "Servo %d moving to %.1f° in %lu ms", servo_id, angle, time_ms);
+        } else {
+            ESP_LOGE(SERVO_TASK_TAG, "Failed to move servo %d to %.1f°", servo_id, angle);
+        }
+    } catch (...) {
+        ESP_LOGE(SERVO_TASK_TAG, "Exception occurred while controlling position");
+        success = false;
+    }
+    
+    return success;
+}
+
+bool servo_control_speed(uint8_t servo_id, int16_t speed) {
+    if (!g_servo_initialized || g_servo_controller == nullptr) {
+        ESP_LOGE(SERVO_TASK_TAG, "Servo not initialized");
+        return false;
+    }
+    
+    if (!g_servo_connected) {
+        ESP_LOGE(SERVO_TASK_TAG, "Servo not connected");
+        return false;
+    }
+    
+    if (speed < -1000 || speed > 1000) {
+        ESP_LOGE(SERVO_TASK_TAG, "Invalid speed: %d (valid range: -1000 to 1000)", speed);
+        return false;
+    }
+    
+    bool success = false;
+    
+    try {
+        // 在电机模式下设置速度
+        success = (g_servo_controller->set_servo_mode_and_speed(servo_id, 1, speed) == Operation_Success);
+        
+        if (success) {
+            ESP_LOGI(SERVO_TASK_TAG, "Servo %d motor speed set to %d", servo_id, speed);
+        } else {
+            ESP_LOGE(SERVO_TASK_TAG, "Failed to set motor speed for servo %d", servo_id);
+        }
+    } catch (...) {
+        ESP_LOGE(SERVO_TASK_TAG, "Exception occurred while controlling speed");
+        success = false;
+    }
+    
+    return success;
+}
+
+} // extern "C"
