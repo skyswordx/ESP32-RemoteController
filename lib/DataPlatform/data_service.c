@@ -144,35 +144,3 @@ void data_service_update_gps(const gps_data_t *p_gps_data) {
 EventGroupHandle_t data_service_get_event_group_handle(void) {
     return g_system_events;
 }
-
-/**
- * @brief 更新旋轉編碼器數據
- */
-void data_service_update_encoder(const encoder_data_t *p_encoder_data) {
-    if (p_encoder_data == NULL || g_state_mutex == NULL) return;
-
-    if (xSemaphoreTake(g_state_mutex, portMAX_DELAY) == pdTRUE) {
-        memcpy(&g_system_state.encoder_data, p_encoder_data, sizeof(encoder_data_t));
-        xSemaphoreGive(g_state_mutex);
-
-        if (g_system_events != NULL) {
-            xEventGroupSetBits(g_system_events, BIT_EVENT_ENCODER_UPDATED);
-        }
-    }
-}
-
-/**
- * @brief 更新搖杆數據
- */
-void data_service_update_joystick(const joystick_data_t *p_joystick_data) {
-    if (p_joystick_data == NULL || g_state_mutex == NULL) return;
-
-    if (xSemaphoreTake(g_state_mutex, portMAX_DELAY) == pdTRUE) {
-        memcpy(&g_system_state.joystick_data, p_joystick_data, sizeof(joystick_data_t));
-        xSemaphoreGive(g_state_mutex);
-
-        if (g_system_events != NULL) {
-            xEventGroupSetBits(g_system_events, BIT_EVENT_JOYSTICK_UPDATED);
-        }
-    }
-}
