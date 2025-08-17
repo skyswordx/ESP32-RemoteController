@@ -109,52 +109,6 @@ extern "C" void data_publisher_task(void* parameter) {
     }
 }
 
-// 保留简化的回调函数用于调试
-extern "C" void encoder_position_changed(int32_t position, int32_t delta) {
-    ESP_LOGD(MAIN_TASK_TAG, "编码器位置: %ld, 变化量: %ld", position, delta);
-}
-
-extern "C" void encoder_button_changed(bool pressed) {
-    ESP_LOGD(MAIN_TASK_TAG, "编码器按钮: %s", pressed ? "按下" : "释放");
-}
-
-// 摇杆数据回调函数（简化版，用于调试）
-extern "C" void joystick_data_changed(const joystick_data_t* data) {
-    if (!data->in_deadzone) {
-        ESP_LOGD(MAIN_TASK_TAG, "摇杆位置: X=%d, Y=%d, 幅度=%.2f, 角度=%.1f°", 
-                 data->x, data->y, data->magnitude, data->angle);
-    }
-}
-
-extern "C" void joystick_button_changed(bool pressed) {
-    ESP_LOGD(MAIN_TASK_TAG, "摇杆按钮: %s", pressed ? "按下" : "释放");
-}
-
-// FreeRTOS 编码器任务
-extern "C" void my_encoder_task(void* parameter) {
-    ESP_LOGI(MAIN_TASK_TAG, "Encoder RTOS task started");
-    
-    while (1) {
-        // 调用编码器处理函数
-        encoder_handler();
-        
-        // 任务延时，释放CPU给其他任务
-        vTaskDelay(pdMS_TO_TICKS(10)); // 10ms 间隔，100Hz 更新频率
-    }
-}
-
-// FreeRTOS 摇杆任务
-extern "C" void my_joystick_task(void* parameter) {
-    ESP_LOGI(MAIN_TASK_TAG, "Joystick RTOS task started");
-    
-    while (1) {
-        // 调用摇杆处理函数
-        joystick_handler();
-        
-        // 任务延时，释放CPU给其他任务
-        vTaskDelay(pdMS_TO_TICKS(20)); // 20ms 间隔，50Hz 更新频率
-    }
-}
 
 // FreeRTOS WiFi 任务
 extern "C" void my_wifi_task(void* parameter) {
@@ -494,64 +448,6 @@ void setup() {
     //     ESP_LOGE(MAIN_TASK_TAG, "Failed to create data publisher task");
     // } else {
     //     ESP_LOGI(MAIN_TASK_TAG, "Data publisher task created successfully");
-    // }
-
-    // // 初始化编码器
-    // encoder_config_t encoder_config = {
-    //     .pin_a = 34,              // 编码器A相引脚
-    //     .pin_b = 35,              // 编码器B相引脚
-    //     .pin_button = 17,         // 编码器按钮引脚
-    //     .use_pullup = true,      // 使用内部上拉电阻
-    //     .steps_per_notch = 4     // 每个刻度4个步数（根据编码器型号调整）
-    // };
-    
-    // if (encoder_init(&encoder_config) == ESP_OK) {
-    //     ESP_LOGI(MAIN_TASK_TAG, "编码器初始化成功");
-    //     // encoder_set_callback(encoder_position_changed);
-    //     // encoder_set_button_callback(encoder_button_changed);
-        
-    //     // 创建编码器 RTOS 任务
-    //     if (xTaskCreate(my_encoder_task, "Encoder_Task", 2048, NULL, tskIDLE_PRIORITY + 3, NULL) != pdPASS) {
-    //         ESP_LOGE(MAIN_TASK_TAG, "Failed to create encoder RTOS task");
-    //     } else {
-    //         ESP_LOGI(MAIN_TASK_TAG, "Encoder RTOS task created successfully");
-    //     }
-    // } else {
-    //     ESP_LOGE(MAIN_TASK_TAG, "编码器初始化失败");
-    // }
-
-    // 初始化摇杆
-    // joystick_config_t joystick_config = {
-    //     .pin_x = 33,             // X轴ADC引脚 (A0)
-    //     .pin_y = 32,             // Y轴ADC引脚 (A3)
-    //     .pin_button = 12,        // 摇杆按钮引脚
-    //     .use_pullup = true,      // 按钮使用内部上拉
-    //     .deadzone = 50,          // 死区大小
-    //     .invert_x = false,       // X轴不反转
-    //     .invert_y = true,        // Y轴反转（根据摇杆安装方向调整）
-    //     .center_x = 0,           // 自动检测中心值
-    //     .center_y = 0            // 自动检测中心值
-    // };
-    
-    // if (joystick_init(&joystick_config) == ESP_OK) {
-    //     ESP_LOGI(MAIN_TASK_TAG, "摇杆初始化成功");
-        
-    //     // 等待一下再校准中心位置
-    //     vTaskDelay(pdMS_TO_TICKS(1000));
-    //     ESP_LOGI(MAIN_TASK_TAG, "正在校准摇杆中心位置...");
-    //     joystick_calibrate_center();
-        
-    //     // joystick_set_callback(joystick_data_changed);
-    //     // joystick_set_button_callback(joystick_button_changed);
-        
-    //     // 创建摇杆 RTOS 任务
-    //     if (xTaskCreate(my_joystick_task, "Joystick_Task", 2048, NULL, tskIDLE_PRIORITY + 3, NULL) != pdPASS) {
-    //         ESP_LOGE(MAIN_TASK_TAG, "Failed to create joystick RTOS task");
-    //     } else {
-    //         ESP_LOGI(MAIN_TASK_TAG, "Joystick RTOS task created successfully");
-    //     }
-    // } else {
-    //     ESP_LOGE(MAIN_TASK_TAG, "摇杆初始化失败");
     // }
 }
 
