@@ -233,7 +233,8 @@ static bool servo_run_diagnostics(void) {
         
         if (!load_status) {
             ESP_LOGW(SERVO_TASK_TAG, "⚠ Servo is in UNLOADED state, attempting to load motor...");
-            if (g_servo_controller->set_servo_motor_load(g_servo_config.servo_id, false) == Operation_Success) {
+            // 修复：装载舵机应该传true，而不是false
+            if (g_servo_controller->set_servo_motor_load(g_servo_config.servo_id, true) == Operation_Success) {
                 ESP_LOGI(SERVO_TASK_TAG, "✓ Servo motor loaded successfully");
                 vTaskDelay(pdMS_TO_TICKS(200));
             } else {
@@ -426,15 +427,18 @@ bool servo_set_load_state(uint8_t servo_id, servo_load_state_t load_state) {
     
     try {
         if (load_state == SERVO_LOAD_LOAD) {
-            success = (g_servo_controller->set_servo_motor_load(servo_id, false) == Operation_Success);
+            // 修复：装载状态应该传true，卸载状态应该传false
+            success = (g_servo_controller->set_servo_motor_load(servo_id, true) == Operation_Success);
             ESP_LOGI(SERVO_TASK_TAG, "Setting servo %d to LOAD state", servo_id);
         } else {
-            success = (g_servo_controller->set_servo_motor_load(servo_id, true) == Operation_Success);
+            success = (g_servo_controller->set_servo_motor_load(servo_id, false) == Operation_Success);
             ESP_LOGI(SERVO_TASK_TAG, "Setting servo %d to UNLOAD state", servo_id);
         }
         
         if (success) {
             ESP_LOGI(SERVO_TASK_TAG, "Successfully changed load state for servo %d", servo_id);
+            // 添加延时让舵机处理装载状态变更
+            vTaskDelay(pdMS_TO_TICKS(200));
         } else {
             ESP_LOGE(SERVO_TASK_TAG, "Failed to change load state for servo %d", servo_id);
         }
@@ -505,6 +509,22 @@ bool servo_control_position(uint8_t servo_id, float angle, uint32_t time_ms) {
     bool success = false;
     
     try {
+        // 首先确保舵机处于舵机模式
+        ESP_LOGI(SERVO_TASK_TAG, "Ensuring servo %d is in SERVO mode before position control", servo_id);
+        if (g_servo_controller->set_servo_mode_and_speed(servo_id, 0, 0) != Operation_Success) {
+            ESP_LOGW(SERVO_TASK_TAG, "Warning: Failed to set servo mode, continuing anyway...");
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(100)); // 等待模式切换完成
+        }
+        
+        // 确保舵机处于装载状态
+        ESP_LOGI(SERVO_TASK_TAG, "Ensuring servo %d is in LOAD state before position control", servo_id);
+        if (g_servo_controller->set_servo_motor_load(servo_id, true) != Operation_Success) {
+            ESP_LOGW(SERVO_TASK_TAG, "Warning: Failed to set load state, continuing anyway...");
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(100)); // 等待装载状态设置完成
+        }
+        
         // 在舵机模式下移动到指定位置
         success = (g_servo_controller->move_servo_immediate(servo_id, angle, time_ms) == Operation_Success);
         

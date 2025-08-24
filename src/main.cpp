@@ -53,7 +53,7 @@ void setup() {
         .tx_pin = 17,            // 舵机串口TX引脚
         .baud_rate = 115200,     // 舵机串口波特率
         .servo_id = 1,           // 默认舵机ID
-        .enable_demo = true,     // 启用演示模式
+        .enable_demo = false,    // 禁用演示模式，避免与手动控制冲突
         .demo_interval = 3000    // 3秒间隔
     };
     
