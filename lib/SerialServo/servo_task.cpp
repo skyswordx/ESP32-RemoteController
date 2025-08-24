@@ -53,10 +53,10 @@ BaseType_t servo_start_task(void) {
         return pdFAIL;
     }
     
-    // 运行诊断测试
+    // 运行诊断测试 (诊断失败不会阻止系统启动，只记录警告)
     if (!servo_run_diagnostics()) {
-        ESP_LOGE(SERVO_TASK_TAG, "Diagnostics failed");
-        return pdFAIL;
+        ESP_LOGW(SERVO_TASK_TAG, "Diagnostics failed, but continuing with servo initialization");
+        // 不返回失败，允许系统继续运行
     }
     
     // 创建任务
@@ -76,6 +76,17 @@ void servo_stop_task(void) {
         g_servo_task_handle = nullptr;
         ESP_LOGI(SERVO_TASK_TAG, "Servo task stopped");
     }
+    
+    // 清理SerialServo对象
+    if (g_servo_controller != nullptr) {
+        delete g_servo_controller;
+        g_servo_controller = nullptr;
+        ESP_LOGI(SERVO_TASK_TAG, "Servo controller cleaned up");
+    }
+    
+    // 重置状态标志
+    g_servo_initialized = false;
+    g_servo_connected = false;
 }
 
 bool servo_is_connected(void) {
@@ -400,11 +411,28 @@ bool servo_get_status(uint8_t servo_id, servo_status_t *status) {
         ESP_LOGW(SERVO_TASK_TAG, "Failed to read servo voltage");
     }
     
-    // 读取工作模式和负载状态 (需要SerialServo库支持)
-    // 这里暂时设置为默认值，具体实现需要根据SerialServo库的API
-    status->work_mode = SERVO_MODE_SERVO;
-    status->load_state = SERVO_LOAD_LOAD;
-    status->current_speed = 0;
+    // 读取工作模式和负载状态
+    int current_mode = 0;
+    int current_speed = 0;
+    if (g_servo_controller->get_servo_mode_and_speed(servo_id, current_mode, current_speed) == Operation_Success) {
+        status->work_mode = (current_mode == 0) ? SERVO_MODE_SERVO : SERVO_MODE_MOTOR;
+        status->current_speed = current_speed;
+        ESP_LOGD(SERVO_TASK_TAG, "Read servo mode: %d, speed: %d", current_mode, current_speed);
+    } else {
+        ESP_LOGW(SERVO_TASK_TAG, "Failed to read servo mode, using default values");
+        status->work_mode = SERVO_MODE_SERVO;
+        status->current_speed = 0;
+    }
+    
+    // 读取负载状态
+    bool load_status = false;
+    if (g_servo_controller->get_servo_motor_load_status(servo_id, load_status) == Operation_Success) {
+        status->load_state = load_status ? SERVO_LOAD_LOAD : SERVO_LOAD_UNLOAD;
+        ESP_LOGD(SERVO_TASK_TAG, "Read servo load status: %s", load_status ? "LOADED" : "UNLOADED");
+    } else {
+        ESP_LOGW(SERVO_TASK_TAG, "Failed to read servo load status, using default value");
+        status->load_state = SERVO_LOAD_LOAD;
+    }
     
     ESP_LOGI(SERVO_TASK_TAG, "Servo %d status: pos=%.1f°, temp=%d°C, volt=%.2fV", 
              servo_id, status->current_position, status->temperature, status->voltage);
