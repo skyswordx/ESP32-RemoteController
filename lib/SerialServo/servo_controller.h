@@ -108,6 +108,25 @@ bool servo_control_position(uint8_t servo_id, float angle, uint32_t time_ms);
  */
 bool servo_control_speed(uint8_t servo_id, int16_t speed);
 
+/**
+ * @brief 夹爪控制专用函数 - 处理机械死区和方向映射
+ * @param servo_id 舵机ID
+ * @param gripper_percent 夹爪开合百分比 (0=完全闭合, 100=完全张开)
+ * @param time_ms 执行时间(ms)
+ * @return true 成功，false 失败
+ */
+bool servo_control_gripper(uint8_t servo_id, float gripper_percent, uint32_t time_ms);
+
+/**
+ * @brief 设置夹爪角度映射参数
+ * @param servo_id 舵机ID
+ * @param closed_angle 完全闭合时的舵机角度
+ * @param open_angle 完全张开时的舵机角度
+ * @param min_step 最小有效步进角度(用于克服机械死区)
+ * @return true 成功，false 失败
+ */
+bool servo_configure_gripper_mapping(uint8_t servo_id, float closed_angle, float open_angle, float min_step);
+
 #ifdef __cplusplus
 }
 #endif

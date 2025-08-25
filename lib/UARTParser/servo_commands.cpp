@@ -129,3 +129,56 @@ void handle_servo_speed(int argc, char *argv[]) {
         ESP_LOGE(SERVO_CMD_TAG, "Failed to control speed for servo %d", servo_id);
     }
 }
+
+void handle_servo_gripper(int argc, char *argv[]) {
+    if (argc < 4) {
+        ESP_LOGE(SERVO_CMD_TAG, "Usage: servo_gripper <servo_id> <percent> <time_ms>");
+        ESP_LOGE(SERVO_CMD_TAG, "  percent: 0-100 (0=closed, 100=open)");
+        ESP_LOGE(SERVO_CMD_TAG, "  time_ms: 20-30000");
+        return;
+    }
+    
+    uint8_t servo_id = (uint8_t)atoi(argv[1]);
+    float gripper_percent = atof(argv[2]);
+    uint32_t time_ms = (uint32_t)atoi(argv[3]);
+    
+    if (gripper_percent < 0 || gripper_percent > 100) {
+        ESP_LOGE(SERVO_CMD_TAG, "Invalid gripper percent: %.1f (valid range: 0-100)", gripper_percent);
+        return;
+    }
+    
+    if (time_ms < 20 || time_ms > 30000) {
+        ESP_LOGE(SERVO_CMD_TAG, "Invalid time: %lu ms (valid range: 20-30000)", time_ms);
+        return;
+    }
+    
+    if (servo_control_gripper(servo_id, gripper_percent, time_ms)) {
+        ESP_LOGI(SERVO_CMD_TAG, "Successfully commanded gripper %d to %.1f%% in %lu ms", 
+                 servo_id, gripper_percent, time_ms);
+    } else {
+        ESP_LOGE(SERVO_CMD_TAG, "Failed to control gripper for servo %d", servo_id);
+    }
+}
+
+void handle_servo_gripper_config(int argc, char *argv[]) {
+    if (argc < 5) {
+        ESP_LOGE(SERVO_CMD_TAG, "Usage: servo_gripper_config <servo_id> <closed_angle> <open_angle> <min_step>");
+        ESP_LOGE(SERVO_CMD_TAG, "  closed_angle: angle when gripper is closed (0-240)");
+        ESP_LOGE(SERVO_CMD_TAG, "  open_angle: angle when gripper is open (0-240)");
+        ESP_LOGE(SERVO_CMD_TAG, "  min_step: minimum step to overcome backlash (1-50)");
+        return;
+    }
+    
+    uint8_t servo_id = (uint8_t)atoi(argv[1]);
+    float closed_angle = atof(argv[2]);
+    float open_angle = atof(argv[3]);
+    float min_step = atof(argv[4]);
+    
+    if (servo_configure_gripper_mapping(servo_id, closed_angle, open_angle, min_step)) {
+        ESP_LOGI(SERVO_CMD_TAG, "Successfully configured gripper mapping for servo %d", servo_id);
+        ESP_LOGI(SERVO_CMD_TAG, "  Closed: %.1f°, Open: %.1f°, MinStep: %.1f°", 
+                 closed_angle, open_angle, min_step);
+    } else {
+        ESP_LOGE(SERVO_CMD_TAG, "Failed to configure gripper mapping for servo %d", servo_id);
+    }
+}

@@ -12,6 +12,21 @@ static SerialServo* g_servo_controller = nullptr;
 static bool g_servo_initialized = false;
 static bool g_servo_connected = false;
 
+// 夹爪映射参数
+typedef struct {
+    float closed_angle;    // 闭合角度
+    float open_angle;      // 张开角度
+    float min_step;        // 最小步进角度
+    bool is_configured;    // 是否已配置
+} gripper_mapping_t;
+
+static gripper_mapping_t g_gripper_mapping = {
+    .closed_angle = 160.0f,  // 根据您的描述，现在160是闭合
+    .open_angle = 90.0f,     // 90是张开
+    .min_step = 15.0f,       // 最小15度步进克服死区
+    .is_configured = true
+};
+
 // 内部函数声明
 static bool servo_hardware_init(void);
 static bool servo_run_diagnostics(void);
@@ -281,6 +296,124 @@ bool servo_control_speed(uint8_t servo_id, int16_t speed) {
         }
     } catch (...) {
         ESP_LOGE(SERVO_CONTROLLER_TAG, "Exception occurred while controlling speed");
+        success = false;
+    }
+    
+    return success;
+}
+
+bool servo_configure_gripper_mapping(uint8_t servo_id, float closed_angle, float open_angle, float min_step) {
+    // 参数验证
+    if (closed_angle < 0 || closed_angle > 240 || open_angle < 0 || open_angle > 240) {
+        ESP_LOGE(SERVO_CONTROLLER_TAG, "Invalid angle range: closed=%.1f, open=%.1f (valid: 0-240)", closed_angle, open_angle);
+        return false;
+    }
+    
+    if (min_step < 1.0f || min_step > 50.0f) {
+        ESP_LOGE(SERVO_CONTROLLER_TAG, "Invalid min_step: %.1f (valid: 1.0-50.0)", min_step);
+        return false;
+    }
+    
+    if (fabs(closed_angle - open_angle) < min_step) {
+        ESP_LOGE(SERVO_CONTROLLER_TAG, "Angle range too small: %.1f degrees (min_step: %.1f)", 
+                 fabs(closed_angle - open_angle), min_step);
+        return false;
+    }
+    
+    // 更新映射参数
+    g_gripper_mapping.closed_angle = closed_angle;
+    g_gripper_mapping.open_angle = open_angle;
+    g_gripper_mapping.min_step = min_step;
+    g_gripper_mapping.is_configured = true;
+    
+    ESP_LOGI(SERVO_CONTROLLER_TAG, "Gripper mapping configured for servo %d:", servo_id);
+    ESP_LOGI(SERVO_CONTROLLER_TAG, "  Closed: %.1f°, Open: %.1f°, MinStep: %.1f°", 
+             closed_angle, open_angle, min_step);
+    
+    return true;
+}
+
+bool servo_control_gripper(uint8_t servo_id, float gripper_percent, uint32_t time_ms) {
+    if (!g_servo_initialized || g_servo_controller == nullptr) {
+        ESP_LOGE(SERVO_CONTROLLER_TAG, "Servo not initialized");
+        return false;
+    }
+    
+    if (!g_servo_connected) {
+        ESP_LOGE(SERVO_CONTROLLER_TAG, "Servo not connected");
+        return false;
+    }
+    
+    if (!g_gripper_mapping.is_configured) {
+        ESP_LOGE(SERVO_CONTROLLER_TAG, "Gripper mapping not configured");
+        return false;
+    }
+    
+    // 参数验证
+    if (gripper_percent < 0 || gripper_percent > 100) {
+        ESP_LOGE(SERVO_CONTROLLER_TAG, "Invalid gripper percent: %.1f (valid: 0-100)", gripper_percent);
+        return false;
+    }
+    
+    if (time_ms < 20 || time_ms > 30000) {
+        ESP_LOGE(SERVO_CONTROLLER_TAG, "Invalid time: %lu ms (valid: 20-30000)", time_ms);
+        return false;
+    }
+    
+    // 计算目标角度（线性插值）
+    float angle_range = g_gripper_mapping.open_angle - g_gripper_mapping.closed_angle;
+    float target_angle = g_gripper_mapping.closed_angle + (angle_range * gripper_percent / 100.0f);
+    
+    // 获取当前位置
+    float current_angle = 0;
+    bool has_current_pos = (g_servo_controller->read_servo_position(servo_id, current_angle) == Operation_Success);
+    
+    if (has_current_pos) {
+        float angle_diff = fabs(target_angle - current_angle);
+        
+        // 如果角度差小于最小步进，使用最小步进
+        if (angle_diff > 0.1f && angle_diff < g_gripper_mapping.min_step) {
+            float direction = (target_angle > current_angle) ? 1.0f : -1.0f;
+            target_angle = current_angle + (direction * g_gripper_mapping.min_step);
+            
+            ESP_LOGW(SERVO_CONTROLLER_TAG, "Angle diff %.1f° < min_step %.1f°, using step movement", 
+                     angle_diff, g_gripper_mapping.min_step);
+        }
+    }
+    
+    // 确保目标角度在有效范围内
+    if (target_angle < 0) target_angle = 0;
+    if (target_angle > 240) target_angle = 240;
+    
+    bool success = false;
+    
+    try {
+        // 首先确保舵机处于舵机模式和装载状态
+        ESP_LOGI(SERVO_CONTROLLER_TAG, "Setting gripper %d to %.1f%% (%.1f°)", 
+                 servo_id, gripper_percent, target_angle);
+        
+        if (g_servo_controller->set_servo_mode_and_speed(servo_id, 0, 0) != Operation_Success) {
+            ESP_LOGW(SERVO_CONTROLLER_TAG, "Warning: Failed to set servo mode");
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+        
+        if (g_servo_controller->set_servo_motor_load(servo_id, true) != Operation_Success) {
+            ESP_LOGW(SERVO_CONTROLLER_TAG, "Warning: Failed to set load state");
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+        
+        // 执行位置控制
+        success = (g_servo_controller->move_servo_immediate(servo_id, target_angle, time_ms) == Operation_Success);
+        
+        if (success) {
+            ESP_LOGI(SERVO_CONTROLLER_TAG, "Gripper movement command sent successfully");
+        } else {
+            ESP_LOGE(SERVO_CONTROLLER_TAG, "Failed to send gripper movement command");
+        }
+    } catch (...) {
+        ESP_LOGE(SERVO_CONTROLLER_TAG, "Exception occurred while controlling gripper");
         success = false;
     }
     

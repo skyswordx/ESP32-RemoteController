@@ -140,6 +140,8 @@ static const command_t command_table[] = {
     {"servo_mode",         handle_servo_mode,         "servo_mode <servo_id> <0|1>: 设置舵机工作模式 (0=舵机, 1=电机)。"},
     {"servo_position",     handle_servo_position,     "servo_position <servo_id> <angle> <time_ms>: 舵机模式下控制位移角度和时间。"},
     {"servo_speed",        handle_servo_speed,        "servo_speed <servo_id> <speed>: 电机模式下设置速度 (-1000到1000)。"},
+    {"servo_gripper",      handle_servo_gripper,      "servo_gripper <servo_id> <percent> <time_ms>: 夹爪控制 (0-100%, 0=闭合, 100=张开)。"},
+    {"servo_gripper_config", handle_servo_gripper_config, "servo_gripper_config <servo_id> <closed_angle> <open_angle> <min_step>: 配置夹爪角度映射。"},
     /* --- 您可以在此行下方添加您的新命令 --- */
     
 };

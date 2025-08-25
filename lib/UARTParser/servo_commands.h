@@ -40,6 +40,20 @@ void handle_servo_position(int argc, char *argv[]);
  */
 void handle_servo_speed(int argc, char *argv[]);
 
+/**
+ * @brief 处理夹爪控制命令
+ * @param argc 参数个数
+ * @param argv 参数数组
+ */
+void handle_servo_gripper(int argc, char *argv[]);
+
+/**
+ * @brief 处理夹爪映射配置命令
+ * @param argc 参数个数
+ * @param argv 参数数组
+ */
+void handle_servo_gripper_config(int argc, char *argv[]);
+
 #ifdef __cplusplus
 }
 #endif
