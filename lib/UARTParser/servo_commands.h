@@ -13,7 +13,7 @@ extern "C" {
 void handle_servo_status(int argc, char *argv[]);
 
 /**
- * @brief 处理设置舵机负载状态命令
+ * @brief 处理设置舵机负载状态命令  
  * @param argc 参数个数
  * @param argv 参数数组
  */

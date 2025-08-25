@@ -1,10 +1,7 @@
-
-
-#ifndef SERVO_TASK_H
-#define SERVO_TASK_H
+#ifndef SERVO_CONTROLLER_H
+#define SERVO_CONTROLLER_H
 
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -49,63 +46,26 @@ typedef struct {
     int rx_pin;             // RX引脚
     int tx_pin;             // TX引脚
     int baud_rate;          // 波特率
-    int servo_id;           // 舵机ID
-    bool enable_demo;       // 是否启用演示模式
-    uint32_t demo_interval; // 演示动作间隔时间(ms)
-} servo_task_config_t;
+    int default_servo_id;   // 默认舵机ID
+} servo_config_t;
 
 /**
- * @brief 初始化串口舵机配置
+ * @brief 初始化舵机控制器
  * @param config 舵机配置结构体指针
- * @return pdPASS 成功，pdFAIL 失败
+ * @return true 成功，false 失败
  */
-BaseType_t servo_init_config(const servo_task_config_t *config);
+bool servo_controller_init(const servo_config_t *config);
 
 /**
- * @brief 启动串口舵机任务
- * @return pdPASS 成功，pdFAIL 失败
+ * @brief 反初始化舵机控制器
  */
-BaseType_t servo_start_task(void);
-
-/**
- * @brief 停止串口舵机任务
- */
-void servo_stop_task(void);
+void servo_controller_deinit(void);
 
 /**
  * @brief 获取舵机连接状态
  * @return true 已连接，false 未连接
  */
 bool servo_is_connected(void);
-
-/**
- * @brief 控制舵机移动到指定角度
- * @param angle 目标角度
- * @param time_ms 执行时间(ms)
- * @return true 成功，false 失败
- */
-bool servo_move_to_angle(float angle, uint32_t time_ms);
-
-/**
- * @brief 读取舵机当前位置
- * @param position 位置输出指针
- * @return true 成功，false 失败
- */
-bool servo_read_position(float *position);
-
-/**
- * @brief 读取舵机温度
- * @param temperature 温度输出指针
- * @return true 成功，false 失败
- */
-bool servo_read_temperature(int *temperature);
-
-/**
- * @brief 读取舵机电压
- * @param voltage 电压输出指针
- * @return true 成功，false 失败
- */
-bool servo_read_voltage(float *voltage);
 
 /**
  * @brief 获取指定ID舵机的完整状态
@@ -116,7 +76,7 @@ bool servo_read_voltage(float *voltage);
 bool servo_get_status(uint8_t servo_id, servo_status_t *status);
 
 /**
- * @brief 切换指定ID舵机的负载状态
+ * @brief 设置指定ID舵机的负载状态
  * @param servo_id 舵机ID
  * @param load_state 目标负载状态
  * @return true 成功，false 失败
@@ -124,7 +84,7 @@ bool servo_get_status(uint8_t servo_id, servo_status_t *status);
 bool servo_set_load_state(uint8_t servo_id, servo_load_state_t load_state);
 
 /**
- * @brief 切换指定ID舵机的工作模式
+ * @brief 设置指定ID舵机的工作模式
  * @param servo_id 舵机ID
  * @param mode 目标工作模式
  * @return true 成功，false 失败
@@ -152,4 +112,4 @@ bool servo_control_speed(uint8_t servo_id, int16_t speed);
 }
 #endif
 
-#endif // SERVO_TASK_H
+#endif // SERVO_CONTROLLER_H

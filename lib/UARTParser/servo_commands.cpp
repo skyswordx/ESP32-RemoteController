@@ -1,5 +1,5 @@
 #include "servo_commands.h"
-#include "servo_task.h"
+#include "servo_controller.h"  // 使用新的简化控制器
 #include "esp_log.h"
 #include <string.h>
 #include <stdlib.h>

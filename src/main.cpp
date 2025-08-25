@@ -11,7 +11,7 @@ extern "C" {
 #include "data_service.h"
 #include "my_wifi_task.h"
 #include "my_data_publisher_task.h"
-#include "servo_task.h"  // 添加SerialServo模块
+#include "servo_controller.h"  // 使用新的简化控制器
 }
 
 #define MAIN_TASK_TAG "MAIN"
@@ -46,29 +46,20 @@ void setup() {
         ESP_LOGE(MAIN_TASK_TAG, "Failed to create UART Parser task");
     }
 
-    // 配置串口舵机
-    servo_task_config_t servo_config = {
+    // 配置并初始化串口舵机控制器
+    servo_config_t servo_config = {
         .uart_num = 2,           // 使用Serial2
         .rx_pin = 16,            // 舵机串口RX引脚
         .tx_pin = 17,            // 舵机串口TX引脚
         .baud_rate = 115200,     // 舵机串口波特率
-        .servo_id = 1,           // 默认舵机ID
-        .enable_demo = false,    // 禁用演示模式，避免与手动控制冲突
-        .demo_interval = 3000    // 3秒间隔
+        .default_servo_id = 1    // 默认舵机ID
     };
     
-    // 初始化串口舵机配置
-    if (servo_init_config(&servo_config) == pdPASS) {
-        ESP_LOGI(MAIN_TASK_TAG, "Servo config initialized successfully");
-        
-        // 启动串口舵机任务
-        if (servo_start_task() == pdPASS) {
-            ESP_LOGI(MAIN_TASK_TAG, "Servo task started successfully");
-        } else {
-            ESP_LOGE(MAIN_TASK_TAG, "Failed to start servo task");
-        }
+    // 初始化舵机控制器
+    if (servo_controller_init(&servo_config)) {
+        ESP_LOGI(MAIN_TASK_TAG, "Servo controller initialized successfully");
     } else {
-        ESP_LOGE(MAIN_TASK_TAG, "Failed to initialize servo config");
+        ESP_LOGE(MAIN_TASK_TAG, "Failed to initialize servo controller");
     }
 
     // Configure WiFi Task for STA mode with TCP client
