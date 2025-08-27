@@ -142,6 +142,16 @@ static const command_t command_table[] = {
     {"servo_speed",        handle_servo_speed,        "servo_speed <servo_id> <speed>: 电机模式下设置速度 (-1000到1000)。"},
     {"servo_gripper",      handle_servo_gripper,      "servo_gripper <servo_id> <percent> <time_ms>: 夹爪控制 (0-100%, 0=闭合, 100=张开)。"},
     {"servo_gripper_config", handle_servo_gripper_config, "servo_gripper_config <servo_id> <closed_angle> <open_angle> <min_step>: 配置夹爪角度映射。"},
+    
+    /* 智能夹爪控制命令 - 基于新的gripper_controller */
+    {"servo_gripper_smooth", handle_servo_gripper_smooth, "servo_gripper_smooth <servo_id> <percent> [time_ms]: 丝滑夹爪控制。"},
+    {"servo_gripper_status", handle_servo_gripper_status, "servo_gripper_status <servo_id>: 查询夹爪状态。"},
+    {"servo_gripper_mode",   handle_servo_gripper_mode,   "servo_gripper_mode <servo_id> <open_loop|closed_loop|force_control>: 设置夹爪控制模式。"},
+    {"servo_gripper_params", handle_servo_gripper_params, "servo_gripper_params <servo_id> <slope_inc> <slope_dec> <pid_kp> <pid_ki> <pid_kd> <pid_limit>: 设置控制参数。"},
+    {"servo_gripper_stop",   handle_servo_gripper_stop,   "servo_gripper_stop <servo_id>: 立即停止夹爪运动。"},
+    {"servo_gripper_calibrate", handle_servo_gripper_calibrate, "servo_gripper_calibrate <servo_id> <position>: 夹爪现场校准。"},
+    {"servo_gripper_test",   handle_servo_gripper_test,   "servo_gripper_test <servo_id> <start%> <end%> <step%>: 夹爪精度测试。"},
+    
     /* --- 您可以在此行下方添加您的新命令 --- */
     
 };

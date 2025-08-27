@@ -54,6 +54,55 @@ void handle_servo_gripper(int argc, char *argv[]);
  */
 void handle_servo_gripper_config(int argc, char *argv[]);
 
+/**
+ * @brief 处理夹爪丝滑控制命令
+ * @param argc 参数个数
+ * @param argv 参数数组
+ */
+void handle_servo_gripper_smooth(int argc, char *argv[]);
+
+/**
+ * @brief 处理夹爪状态查询命令
+ * @param argc 参数个数
+ * @param argv 参数数组
+ */
+void handle_servo_gripper_status(int argc, char *argv[]);
+
+/**
+ * @brief 处理夹爪模式设置命令
+ * @param argc 参数个数
+ * @param argv 参数数组
+ */
+void handle_servo_gripper_mode(int argc, char *argv[]);
+
+/**
+ * @brief 处理夹爪参数配置命令
+ * @param argc 参数个数
+ * @param argv 参数数组
+ */
+void handle_servo_gripper_params(int argc, char *argv[]);
+
+/**
+ * @brief 处理夹爪停止命令
+ * @param argc 参数个数
+ * @param argv 参数数组
+ */
+void handle_servo_gripper_stop(int argc, char *argv[]);
+
+/**
+ * @brief 处理夹爪校准命令
+ * @param argc 参数个数
+ * @param argv 参数数组
+ */
+void handle_servo_gripper_calibrate(int argc, char *argv[]);
+
+/**
+ * @brief 处理夹爪测试命令
+ * @param argc 参数个数
+ * @param argv 参数数组
+ */
+void handle_servo_gripper_test(int argc, char *argv[]);
+
 #ifdef __cplusplus
 }
 #endif
