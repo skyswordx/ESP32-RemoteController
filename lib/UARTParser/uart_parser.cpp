@@ -365,19 +365,24 @@ static void handle_servo_position_test(int argc, char *argv[])
     }
     
     // 计算误差
-    float error = actual_angle - target_angle;
-    
+    float input_error = actual_angle - target_angle;
+    float preset_error = actual_angle - preset_angle;
+
     // 格式化输出结果
     snprintf(buf, sizeof(buf), 
              "舵机测试结果:\r\n"
-             "  预设位置: 角度=%.2f°, 执行时间=%d毫秒\r\n"
-             "  实际位置: 角度=%.2f°\r\n"
-             "  误差: %.2f°\r\n"
-             "  测试数据: %d,%.2f,%.2f,%.2f,%.2f\r\n", // ID,目标角度,预设角度,实际角度,误差
+             "  输入目标位置：角度=%.2f°\r\n"
+             "  舵机系统预设位置: 角度=%.2f°, 执行时间=%d毫秒\r\n"
+             "  观察得到实际位置: 角度=%.2f°\r\n"
+             "  输入-观察的误差: %.2f°\r\n"
+             "  预设-观察的误差: %.2f°\r\n"
+             "  测试数据: %d,%.2f,%.2f,%.2f\r\n", // ID,目标角度,预设角度,实际角度
+             target_angle, 
              preset_angle, preset_time,
              actual_angle,
-             error,
-             id, target_angle, preset_angle, actual_angle, error);
+             input_error,
+             preset_error,
+             id, target_angle, preset_angle, actual_angle);
     uart_parser_put_string(buf);
 }
 
