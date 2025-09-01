@@ -45,8 +45,10 @@ static void handle_servo_position(int argc, char *argv[]);
 static void handle_servo_speed(int argc, char *argv[]);
 
 /* 新增舵机命令处理函数声明 */
-static void handle_servo_get_position(int argc, char *argv[]);
+static void handle_servo_get_cmd_position(int argc, char *argv[]);
+static void handle_servo_read_now_position(int argc, char *argv[]);
 static void handle_servo_position_delay(int argc, char *argv[]);
+static void handle_servo_position_test(int argc, char *argv[]);
 static void handle_servo_get_delay(int argc, char *argv[]);
 static void handle_servo_offset(int argc, char *argv[]);
 static void handle_servo_get_offset(int argc, char *argv[]);
@@ -170,8 +172,10 @@ static const command_t command_table[] = {
     {"servo_speed",        handle_servo_speed,        "servo_speed <servo_id> <speed>: 电机模式下设置速度。"},
     
     /* 新增舵机命令 */
-    {"servo_get_position", handle_servo_get_position, "servo_get_position <servo_id>: 获取舵机的当前预设位置和时间。"},
+    {"servo_get_cmd_position", handle_servo_get_cmd_position, "servo_get_cmd_position <servo_id>: 获取舵机的当前预设位置和时间。"},
+    {"servo_read_now_position", handle_servo_read_now_position, "servo_read_now_position <servo_id>: 读取舵机的实时当前角度位置。"},
     {"servo_position_delay", handle_servo_position_delay, "servo_position_delay <servo_id> <angle> <time_ms>: 设置延时执行舵机运动。"},
+    {"servo_position_test", handle_servo_position_test, "servo_position_test <servo_id> <angle> <time_ms>: 测试舵机运动并记录预设值与实际值。"},
     {"servo_get_delay",    handle_servo_get_delay,    "servo_get_delay <servo_id>: 获取舵机延时执行的预设位置。"},
     {"servo_offset",       handle_servo_offset,       "servo_offset <servo_id> <angle> <save>: 设置舵机角度偏移(save=0|1)。"},
     {"servo_get_offset",   handle_servo_get_offset,   "servo_get_offset <servo_id>: 获取舵机角度偏移值。"},
@@ -276,10 +280,10 @@ static void handle_servo_speed(int argc, char *argv[])
 
 /* ------------- 新增舵机命令实现 ------------- */
 
-static void handle_servo_get_position(int argc, char *argv[])
+static void handle_servo_get_cmd_position(int argc, char *argv[])
 {
     if (argc < 2) {
-        uart_parser_put_string("用法: servo_get_position <servo_id>\r\n");
+        uart_parser_put_string("用法: servo_get_cmd_position <servo_id>\r\n");
         return;
     }
     ensure_serial_servo_inited();
@@ -294,6 +298,87 @@ static void handle_servo_get_position(int argc, char *argv[])
     } else {
         uart_parser_put_string("获取舵机预设位置失败\r\n");
     }
+}
+
+static void handle_servo_read_now_position(int argc, char *argv[])
+{
+    if (argc < 2) {
+        uart_parser_put_string("用法: servo_read_now_position <servo_id>\r\n");
+        return;
+    }
+    ensure_serial_servo_inited();
+    uint8_t id = (uint8_t)atoi(argv[1]);
+    float position = 0;
+    char buf[128];
+    
+    if (serialServo.read_servo_position(id, position) == Operation_Success) {
+        snprintf(buf, sizeof(buf), "Servo %d 实时位置: 角度=%.2f°\r\n", id, position);
+        uart_parser_put_string(buf);
+    } else {
+        uart_parser_put_string("读取舵机实时位置失败\r\n");
+    }
+}
+
+static void handle_servo_position_test(int argc, char *argv[])
+{
+    if (argc < 4) {
+        uart_parser_put_string("用法: servo_position_test <servo_id> <angle> <time_ms>\r\n");
+        return;
+    }
+    ensure_serial_servo_inited();
+    uint8_t id = (uint8_t)atoi(argv[1]);
+    float target_angle = (float)atof(argv[2]);
+    uint16_t time_ms = (uint16_t)atoi(argv[3]);
+    
+    // 变量用于存储预设值和实际值
+    float preset_angle = 0;
+    uint16_t preset_time = 0;
+    float actual_angle = 0;
+    char buf[256];
+    
+    // 首先移动舵机
+    if (serialServo.move_servo_immediate(id, target_angle, time_ms) != Operation_Success) {
+        uart_parser_put_string("舵机移动指令发送失败\r\n");
+        return;
+    }
+    
+    // 获取预设值（应该和我们设置的一样，但为确保准确性，从舵机读取）
+    if (serialServo.get_servo_move_immediate(id, &preset_angle, &preset_time) != Operation_Success) {
+        uart_parser_put_string("获取舵机预设位置失败\r\n");
+        return;
+    }
+    
+    // 输出初始信息
+    snprintf(buf, sizeof(buf), "舵机测试开始: ID=%d, 目标角度=%.2f°, 执行时间=%d毫秒\r\n", 
+             id, target_angle, time_ms);
+    uart_parser_put_string(buf);
+    
+    // 等待运动完成（等待时间稍微长于设定的运动时间）
+    snprintf(buf, sizeof(buf), "等待舵机运动完成 (%d毫秒)...\r\n", time_ms);
+    uart_parser_put_string(buf);
+    vTaskDelay(pdMS_TO_TICKS(time_ms + 100));
+    
+    // 读取舵机实际达到的位置
+    if (serialServo.read_servo_position(id, actual_angle) != Operation_Success) {
+        uart_parser_put_string("读取舵机实际位置失败\r\n");
+        return;
+    }
+    
+    // 计算误差
+    float error = actual_angle - target_angle;
+    
+    // 格式化输出结果
+    snprintf(buf, sizeof(buf), 
+             "舵机测试结果:\r\n"
+             "  预设位置: 角度=%.2f°, 执行时间=%d毫秒\r\n"
+             "  实际位置: 角度=%.2f°\r\n"
+             "  误差: %.2f°\r\n"
+             "  测试数据: %d,%.2f,%.2f,%.2f,%.2f\r\n", // ID,目标角度,预设角度,实际角度,误差
+             preset_angle, preset_time,
+             actual_angle,
+             error,
+             id, target_angle, preset_angle, actual_angle, error);
+    uart_parser_put_string(buf);
 }
 
 static void handle_servo_position_delay(int argc, char *argv[])

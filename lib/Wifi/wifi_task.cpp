@@ -114,87 +114,169 @@ bool is_wifi_connected(void)
     return s_is_connected;
 }
 
+// 网络任务监控标志
+static volatile bool network_task_running = true;
+static volatile bool network_reconnect_in_progress = false;
+
 // 网络任务处理函数
 static void my_network_task(void *pvParameters)
 {
     ESP_LOGI(NETWORK_TASK_TAG, "Starting network task...");
     
     network_config_t* net_config = &s_wifi_config->network_config;
+    bool initial_connection_done = false;
     
-    switch (net_config->protocol) {
-        case NETWORK_PROTOCOL_TCP_CLIENT:
-        {
-            ESP_LOGI(NETWORK_TASK_TAG, "Initializing TCP Client mode");
-            s_tcp_client = new WiFiClient();
-            
-            uint32_t start_time = millis();
-            while (!s_tcp_client->connected()) {
-                ESP_LOGI(NETWORK_TASK_TAG, "Connecting to TCP server %s:%d", 
-                         net_config->remote_host, net_config->remote_port);
+    // 持续监控和维护网络连接
+    while (network_task_running) {
+        // 首次连接初始化
+        if (!initial_connection_done) {
+            switch (net_config->protocol) {
+                case NETWORK_PROTOCOL_TCP_CLIENT:
+                {
+                    ESP_LOGI(NETWORK_TASK_TAG, "Initializing TCP Client mode");
+                    s_tcp_client = new WiFiClient();
+                    
+                    uint32_t start_time = millis();
+                    bool connection_timeout = false;
+                    
+                    while (!s_tcp_client->connected() && !connection_timeout) {
+                        ESP_LOGI(NETWORK_TASK_TAG, "Connecting to TCP server %s:%d", 
+                                net_config->remote_host, net_config->remote_port);
+                        
+                        if (s_tcp_client->connect(net_config->remote_host, net_config->remote_port)) {
+                            s_network_connected = true;
+                            ESP_LOGI(NETWORK_TASK_TAG, "TCP Client connected successfully");
+                            snprintf(s_network_info, sizeof(s_network_info), 
+                                    "TCP Client connected to %s:%d", 
+                                    net_config->remote_host, net_config->remote_port);
+                            
+                            // 创建网络数据接收任务
+                            xTaskCreate(network_receive_task, "network_rx_task", 4096, NULL, 5, NULL);
+                            break;
+                        } else {
+                            ESP_LOGW(NETWORK_TASK_TAG, "TCP connection failed, retrying...");
+                            vTaskDelay(pdMS_TO_TICKS(1000));
+                        }
+                        
+                        if (millis() - start_time > net_config->connect_timeout_ms) {
+                            ESP_LOGE(NETWORK_TASK_TAG, "TCP connection timeout!");
+                            connection_timeout = true;
+                        }
+                    }
+                    break;
+                }
                 
-                if (s_tcp_client->connect(net_config->remote_host, net_config->remote_port)) {
+                case NETWORK_PROTOCOL_TCP_SERVER:
+                {
+                    ESP_LOGI(NETWORK_TASK_TAG, "Initializing TCP Server mode on port %d", net_config->local_port);
+                    s_tcp_server = new WiFiServer(net_config->local_port);
+                    s_tcp_server->begin();
                     s_network_connected = true;
-                    ESP_LOGI(NETWORK_TASK_TAG, "TCP Client connected successfully");
+                    ESP_LOGI(NETWORK_TASK_TAG, "TCP Server started successfully");
                     snprintf(s_network_info, sizeof(s_network_info), 
-                            "TCP Client connected to %s:%d", 
-                            net_config->remote_host, net_config->remote_port);
+                            "TCP Server listening on port %d", net_config->local_port);
                     
                     // 创建网络数据接收任务
                     xTaskCreate(network_receive_task, "network_rx_task", 4096, NULL, 5, NULL);
-                    
                     break;
-                } else {
-                    ESP_LOGW(NETWORK_TASK_TAG, "TCP connection failed, retrying...");
-                    vTaskDelay(pdMS_TO_TICKS(1000));
                 }
                 
-                if (millis() - start_time > net_config->connect_timeout_ms) {
-                    ESP_LOGE(NETWORK_TASK_TAG, "TCP connection timeout!");
+                case NETWORK_PROTOCOL_UDP:
+                {
+                    ESP_LOGI(NETWORK_TASK_TAG, "Initializing UDP mode on port %d", net_config->local_port);
+                    s_udp = new WiFiUDP();
+                    if (s_udp->begin(net_config->local_port)) {
+                        s_network_connected = true;
+                        ESP_LOGI(NETWORK_TASK_TAG, "UDP initialized successfully");
+                        snprintf(s_network_info, sizeof(s_network_info), 
+                                "UDP listening on port %d", net_config->local_port);
+                        
+                        // 创建网络数据接收任务
+                        xTaskCreate(network_receive_task, "network_rx_task", 4096, NULL, 5, NULL);
+                    } else {
+                        ESP_LOGE(NETWORK_TASK_TAG, "Failed to initialize UDP");
+                    }
                     break;
                 }
+                
+                default:
+                    ESP_LOGW(NETWORK_TASK_TAG, "Unknown network protocol");
+                    break;
             }
-            break;
-        }
-        
-        case NETWORK_PROTOCOL_TCP_SERVER:
-        {
-            ESP_LOGI(NETWORK_TASK_TAG, "Initializing TCP Server mode on port %d", net_config->local_port);
-            s_tcp_server = new WiFiServer(net_config->local_port);
-            s_tcp_server->begin();
-            s_network_connected = true;
-            ESP_LOGI(NETWORK_TASK_TAG, "TCP Server started successfully");
-            snprintf(s_network_info, sizeof(s_network_info), 
-                    "TCP Server listening on port %d", net_config->local_port);
             
-            // 创建网络数据接收任务
-            xTaskCreate(network_receive_task, "network_rx_task", 4096, NULL, 5, NULL);
-            break;
+            initial_connection_done = true;
         }
-        
-        case NETWORK_PROTOCOL_UDP:
-        {
-            ESP_LOGI(NETWORK_TASK_TAG, "Initializing UDP mode on port %d", net_config->local_port);
-            s_udp = new WiFiUDP();
-            if (s_udp->begin(net_config->local_port)) {
-                s_network_connected = true;
-                ESP_LOGI(NETWORK_TASK_TAG, "UDP initialized successfully");
-                snprintf(s_network_info, sizeof(s_network_info), 
-                        "UDP listening on port %d", net_config->local_port);
-                
-                // 创建网络数据接收任务
-                xTaskCreate(network_receive_task, "network_rx_task", 4096, NULL, 5, NULL);
-            } else {
-                ESP_LOGE(NETWORK_TASK_TAG, "Failed to initialize UDP");
+        // 连接建立后持续监控
+        else {
+            // 仅当WiFi连接正常时检查网络连接状态
+            if (is_wifi_connected()) {
+                if (!is_network_connected() && !network_reconnect_in_progress) {
+                    ESP_LOGW(NETWORK_TASK_TAG, "Network connection lost, attempting to reconnect");
+                    network_reconnect_in_progress = true;
+                    
+                    // 根据当前配置重新建立网络连接
+                    switch (net_config->protocol) {
+                        case NETWORK_PROTOCOL_TCP_CLIENT:
+                            ESP_LOGI(NETWORK_TASK_TAG, "Reconnecting TCP client to %s:%d", 
+                                    net_config->remote_host, net_config->remote_port);
+                                    
+                            // 先断开旧连接
+                            network_disconnect();
+                            vTaskDelay(pdMS_TO_TICKS(1000)); // 等待断开完成
+                            
+                            // 尝试重新连接
+                            if (network_connect_tcp_client(
+                                    net_config->remote_host, 
+                                    net_config->remote_port, 
+                                    net_config->connect_timeout_ms)) {
+                                ESP_LOGI(NETWORK_TASK_TAG, "TCP Client reconnected successfully");
+                            } else {
+                                ESP_LOGE(NETWORK_TASK_TAG, "Failed to reconnect TCP Client");
+                            }
+                            break;
+                            
+                        case NETWORK_PROTOCOL_TCP_SERVER:
+                            // TCP服务器模式下，如果服务器对象被销毁，尝试重新创建
+                            if (s_tcp_server == NULL) {
+                                ESP_LOGI(NETWORK_TASK_TAG, "Restarting TCP Server on port %d", net_config->local_port);
+                                s_tcp_server = new WiFiServer(net_config->local_port);
+                                s_tcp_server->begin();
+                                s_network_connected = true;
+                                
+                                // 创建网络数据接收任务
+                                xTaskCreate(network_receive_task, "network_rx_task", 4096, NULL, 5, NULL);
+                            }
+                            break;
+                            
+                        case NETWORK_PROTOCOL_UDP:
+                            // UDP模式下，如果UDP对象被销毁，尝试重新创建
+                            if (s_udp == NULL) {
+                                ESP_LOGI(NETWORK_TASK_TAG, "Restarting UDP on port %d", net_config->local_port);
+                                s_udp = new WiFiUDP();
+                                if (s_udp->begin(net_config->local_port)) {
+                                    s_network_connected = true;
+                                    
+                                    // 创建网络数据接收任务
+                                    xTaskCreate(network_receive_task, "network_rx_task", 4096, NULL, 5, NULL);
+                                }
+                            }
+                            break;
+                            
+                        default:
+                            break;
+                    }
+                    
+                    network_reconnect_in_progress = false;
+                }
             }
-            break;
         }
         
-        default:
-            ESP_LOGW(NETWORK_TASK_TAG, "Unknown network protocol");
-            break;
+        // 每3秒检查一次网络连接状态
+        vTaskDelay(pdMS_TO_TICKS(3000));
     }
     
-    // 网络任务完成初始化后删除自己
+    // 如果任务被请求停止
+    ESP_LOGI(NETWORK_TASK_TAG, "Network task stopping");
     vTaskDelete(NULL);
 }
 
@@ -430,6 +512,64 @@ bool get_current_network_config(network_config_t* config)
     return true;
 }
 
+/**
+ * @brief 重新启动网络监控系统
+ * 
+ * 这个函数重置并重新启动整个网络监控系统，包括WiFi连接和网络协议连接。
+ * 在网络状态异常时可以调用此函数进行全面的恢复。
+ * 
+ * @return true 如果重启成功
+ * @return false 如果重启失败
+ */
+bool restart_network_system()
+{
+    ESP_LOGI(NETWORK_TASK_TAG, "Restarting network system...");
+    
+    // 1. 断开网络连接
+    network_disconnect();
+    
+    // 2. 断开WiFi连接
+    wifi_disconnect();
+    vTaskDelay(pdMS_TO_TICKS(1000)); // 等待断开完成
+    
+    // 3. 获取当前配置
+    wifi_task_config_t config;
+    if (!get_current_wifi_config(&config)) {
+        ESP_LOGE(NETWORK_TASK_TAG, "Failed to get WiFi configuration");
+        return false;
+    }
+    
+    // 4. 重新连接WiFi
+    if (!wifi_connect_new(config.ssid, config.password, config.sta_connect_timeout_ms)) {
+        ESP_LOGE(NETWORK_TASK_TAG, "Failed to reconnect WiFi");
+        return false;
+    }
+    
+    // 5. 如果配置了网络协议，重新建立网络连接
+    if (config.network_config.protocol != NETWORK_PROTOCOL_NONE) {
+        // 根据协议类型重新连接
+        switch (config.network_config.protocol) {
+            case NETWORK_PROTOCOL_TCP_CLIENT:
+                if (!network_connect_tcp_client(
+                        config.network_config.remote_host,
+                        config.network_config.remote_port,
+                        config.network_config.connect_timeout_ms)) {
+                    ESP_LOGE(NETWORK_TASK_TAG, "Failed to reconnect TCP client");
+                    return false;
+                }
+                break;
+                
+            // 可以添加其他网络协议类型的处理
+            
+            default:
+                break;
+        }
+    }
+    
+    ESP_LOGI(NETWORK_TASK_TAG, "Network system restarted successfully");
+    return true;
+}
+
 // 网络数据接收处理任务
 static void network_receive_task(void *pvParameters)
 {
@@ -473,6 +613,7 @@ static void network_receive_task(void *pvParameters)
                                     // 释放之前的内存
                                     if (cmd_copy != NULL) {
                                         free(cmd_copy);
+                                        cmd_copy = NULL;
                                     }
                                     // 分配内存并复制命令
                                     cmd_copy = (char *)malloc(cmd_index + 1);
@@ -489,6 +630,49 @@ static void network_receive_task(void *pvParameters)
                                     // 重置命令缓冲区索引
                                     cmd_index = 0;
                                 }
+                            } 
+                            // 处理字符串形式的"\r"或"\n"
+                            else if (c == '\\' && i + 1 < read_size) {
+                                // 检查下一个字符
+                                char next_c = rx_buffer[i + 1];
+                                if (next_c == 'r' || next_c == 'n') {
+                                    // 跳过'\\'，直接处理为结束符
+                                    i++; // 跳过下一个字符('r'或'n')
+                                    
+                                    if (cmd_index > 0) {
+                                        // 添加字符串结束符
+                                        cmd_buffer[cmd_index] = '\0';
+                                        
+                                        ESP_LOGI(NETWORK_TASK_TAG, "Processing command from TCP with string escape seq: %s", cmd_buffer);
+                                        
+                                        // 将命令发送到解析队列
+                                        static char *cmd_copy = NULL;
+                                        // 释放之前的内存
+                                        if (cmd_copy != NULL) {
+                                            free(cmd_copy);
+                                            cmd_copy = NULL;
+                                        }
+                                        // 分配内存并复制命令
+                                        cmd_copy = (char *)malloc(cmd_index + 1);
+                                        if (cmd_copy) {
+                                            strcpy(cmd_copy, cmd_buffer);
+                                            // 将命令送入队列
+                                            if (uart_parser_send_command_to_queue(cmd_copy) != pdPASS) {
+                                                ESP_LOGW(NETWORK_TASK_TAG, "Command queue is full, command discarded");
+                                                free(cmd_copy);
+                                                cmd_copy = NULL;
+                                            }
+                                        }
+                                        
+                                        // 重置命令缓冲区索引
+                                        cmd_index = 0;
+                                    }
+                                } else {
+                                    // 正常的反斜杠，添加到缓冲区
+                                    if (cmd_index < sizeof(cmd_buffer) - 1) {
+                                        cmd_buffer[cmd_index++] = c;
+                                    }
+                                }
                             } else {
                                 // 将字符添加到命令缓冲区
                                 if (cmd_index < sizeof(cmd_buffer) - 1) {
@@ -498,13 +682,13 @@ static void network_receive_task(void *pvParameters)
                         }
                     }
                 } else {
-                    // TCP客户端断开连接，尝试重新连接
+                    // TCP客户端断开连接，更新连接状态标志，让网络监控任务处理重连
                     if (s_network_connected) {
-                        ESP_LOGW(NETWORK_TASK_TAG, "TCP client disconnected, trying to reconnect");
+                        ESP_LOGW(NETWORK_TASK_TAG, "TCP client disconnected, marked for reconnection");
                         s_network_connected = false;
                         
-                        // 可以在这里添加重新连接逻辑，或者等待主循环处理
-                        vTaskDelay(pdMS_TO_TICKS(5000)); // 等待5秒后重试
+                        // 短暂延时，避免CPU占用
+                        vTaskDelay(pdMS_TO_TICKS(1000));
                     }
                 }
                 break;

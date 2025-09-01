@@ -173,6 +173,17 @@ bool network_connect_tcp_client(const char* remote_host, uint16_t remote_port, u
  */
 bool get_current_network_config(network_config_t* config);
 
+/**
+ * @brief 重新启动网络监控系统
+ * 
+ * 这个函数重置并重新启动整个网络监控系统，包括WiFi连接和网络协议连接。
+ * 在网络状态异常时可以调用此函数进行全面的恢复。
+ * 
+ * @return true 如果重启成功
+ * @return false 如果重启失败
+ */
+bool restart_network_system(void);
+
 #ifdef __cplusplus
 }
 #endif

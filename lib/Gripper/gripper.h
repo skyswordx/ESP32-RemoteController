@@ -26,6 +26,10 @@ public:
     uint8_t uart_port_id = 2;            ///< 夹爪舵机所连接的UART端口
     uint32_t active_servo_id = 1;        ///< 夹爪舵机ID
     SerialServo servo;
+
+    float angle_input_max = 147.00; // 146.64
+    float angle_input_min = 101.00;       ///< 夹爪舵机输入角度最小值
+
     PID_controller_c pid_position;
 
     static uint32_t total_servo_count;   ///< 当前舵机总数

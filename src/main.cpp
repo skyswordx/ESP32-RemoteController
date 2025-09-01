@@ -57,7 +57,7 @@ void setup() {
 
     // Configure network as TCP client
     wifi_config.network_config.protocol = NETWORK_PROTOCOL_TCP_CLIENT;
-    strncpy(wifi_config.network_config.remote_host, "192.168.1.101", sizeof(wifi_config.network_config.remote_host) - 1); // 通常手机热点的网关IP
+    strncpy(wifi_config.network_config.remote_host, "192.168.1.121", sizeof(wifi_config.network_config.remote_host) - 1); // 通常手机热点的网关IP
     wifi_config.network_config.remote_port = 2233; // 手机端TCP服务器端口，您可以根据实际情况修改
     wifi_config.network_config.auto_connect = true; // WiFi连接成功后自动开始TCP连接
     wifi_config.network_config.connect_timeout_ms = 10000; // 10 seconds timeout for TCP connection
