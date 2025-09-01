@@ -114,6 +114,12 @@ bool is_wifi_connected(void)
     return s_is_connected;
 }
 
+// 声明外部函数，用于将TCP接收到的命令发送到解析队列
+extern "C" int uart_parser_send_command_to_queue(char *cmd_string);
+
+// 网络数据接收处理任务声明
+static void network_receive_task(void *pvParameters);
+
 // 网络任务处理函数
 static void my_network_task(void *pvParameters)
 {
@@ -165,9 +171,6 @@ static void my_network_task(void *pvParameters)
             ESP_LOGI(NETWORK_TASK_TAG, "TCP Server started successfully");
             snprintf(s_network_info, sizeof(s_network_info), 
                     "TCP Server listening on port %d", net_config->local_port);
-            
-            // 创建网络数据接收任务
-            xTaskCreate(network_receive_task, "network_rx_task", 4096, NULL, 5, NULL);
             break;
         }
         
@@ -180,9 +183,6 @@ static void my_network_task(void *pvParameters)
                 ESP_LOGI(NETWORK_TASK_TAG, "UDP initialized successfully");
                 snprintf(s_network_info, sizeof(s_network_info), 
                         "UDP listening on port %d", net_config->local_port);
-                
-                // 创建网络数据接收任务
-                xTaskCreate(network_receive_task, "network_rx_task", 4096, NULL, 5, NULL);
             } else {
                 ESP_LOGE(NETWORK_TASK_TAG, "Failed to initialize UDP");
             }
@@ -393,9 +393,6 @@ bool network_connect_tcp_client(const char* remote_host, uint16_t remote_port, u
             snprintf(s_network_info, sizeof(s_network_info), 
                     "TCP Client connected to %s:%d", remote_host, remote_port);
             
-            // 创建网络数据接收任务
-            xTaskCreate(network_receive_task, "network_rx_task", 4096, NULL, 5, NULL);
-            
             // 更新配置
             if (s_wifi_config) {
                 s_wifi_config->network_config.protocol = NETWORK_PROTOCOL_TCP_CLIENT;
@@ -428,208 +425,4 @@ bool get_current_network_config(network_config_t* config)
     
     memcpy(config, &s_wifi_config->network_config, sizeof(network_config_t));
     return true;
-}
-
-// 网络数据接收处理任务
-static void network_receive_task(void *pvParameters)
-{
-    ESP_LOGI(NETWORK_TASK_TAG, "Network receive task started");
-    
-    char rx_buffer[256]; // 接收缓冲区
-    static char cmd_buffer[256]; // 命令缓冲区
-    static int cmd_index = 0;
-    
-    while (1) {
-        // 根据当前网络协议类型处理数据接收
-        network_config_t* net_config = &s_wifi_config->network_config;
-        int bytes_received = 0;
-        
-        switch (net_config->protocol) {
-            case NETWORK_PROTOCOL_TCP_CLIENT:
-                if (s_tcp_client && s_tcp_client->connected()) {
-                    bytes_received = s_tcp_client->available();
-                    if (bytes_received > 0) {
-                        // 限制单次读取大小
-                        int read_size = bytes_received > sizeof(rx_buffer) - 1 ? sizeof(rx_buffer) - 1 : bytes_received;
-                        s_tcp_client->read((uint8_t*)rx_buffer, read_size);
-                        rx_buffer[read_size] = '\0';
-                        
-                        ESP_LOGI(NETWORK_TASK_TAG, "TCP Received %d bytes: %s", read_size, rx_buffer);
-                        
-                        // 处理接收到的数据，转发给命令解析系统
-                        for (int i = 0; i < read_size; i++) {
-                            char c = rx_buffer[i];
-                            
-                            // 检测命令结束符 (回车或换行)
-                            if (c == '\r' || c == '\n') {
-                                if (cmd_index > 0) {
-                                    // 添加字符串结束符
-                                    cmd_buffer[cmd_index] = '\0';
-                                    
-                                    ESP_LOGI(NETWORK_TASK_TAG, "Processing command from TCP: %s", cmd_buffer);
-                                    
-                                    // 将命令发送到解析队列
-                                    static char *cmd_copy = NULL;
-                                    // 释放之前的内存
-                                    if (cmd_copy != NULL) {
-                                        free(cmd_copy);
-                                    }
-                                    // 分配内存并复制命令
-                                    cmd_copy = (char *)malloc(cmd_index + 1);
-                                    if (cmd_copy) {
-                                        strcpy(cmd_copy, cmd_buffer);
-                                        // 将命令送入队列
-                                        if (uart_parser_send_command_to_queue(cmd_copy) != pdPASS) {
-                                            ESP_LOGW(NETWORK_TASK_TAG, "Command queue is full, command discarded");
-                                            free(cmd_copy);
-                                            cmd_copy = NULL;
-                                        }
-                                    }
-                                    
-                                    // 重置命令缓冲区索引
-                                    cmd_index = 0;
-                                }
-                            } else {
-                                // 将字符添加到命令缓冲区
-                                if (cmd_index < sizeof(cmd_buffer) - 1) {
-                                    cmd_buffer[cmd_index++] = c;
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // TCP客户端断开连接，尝试重新连接
-                    if (s_network_connected) {
-                        ESP_LOGW(NETWORK_TASK_TAG, "TCP client disconnected, trying to reconnect");
-                        s_network_connected = false;
-                        
-                        // 可以在这里添加重新连接逻辑，或者等待主循环处理
-                        vTaskDelay(pdMS_TO_TICKS(5000)); // 等待5秒后重试
-                    }
-                }
-                break;
-                
-            case NETWORK_PROTOCOL_TCP_SERVER:
-                if (s_tcp_server) {
-                    WiFiClient client = s_tcp_server->available();
-                    if (client) {
-                        bytes_received = client.available();
-                        if (bytes_received > 0) {
-                            // 限制单次读取大小
-                            int read_size = bytes_received > sizeof(rx_buffer) - 1 ? sizeof(rx_buffer) - 1 : bytes_received;
-                            client.read((uint8_t*)rx_buffer, read_size);
-                            rx_buffer[read_size] = '\0';
-                            
-                            ESP_LOGI(NETWORK_TASK_TAG, "TCP Server Received %d bytes: %s", read_size, rx_buffer);
-                            
-                            // 处理接收到的数据，转发给命令解析系统
-                            // 与TCP客户端处理方式相同
-                            for (int i = 0; i < read_size; i++) {
-                                char c = rx_buffer[i];
-                                
-                                // 检测命令结束符 (回车或换行)
-                                if (c == '\r' || c == '\n') {
-                                    if (cmd_index > 0) {
-                                        // 添加字符串结束符
-                                        cmd_buffer[cmd_index] = '\0';
-                                        
-                                        ESP_LOGI(NETWORK_TASK_TAG, "Processing command from TCP Server: %s", cmd_buffer);
-                                        
-                                        // 将命令发送到解析队列
-                                        static char *cmd_copy = NULL;
-                                        // 释放之前的内存
-                                        if (cmd_copy != NULL) {
-                                            free(cmd_copy);
-                                        }
-                                        // 分配内存并复制命令
-                                        cmd_copy = (char *)malloc(cmd_index + 1);
-                                        if (cmd_copy) {
-                                            strcpy(cmd_copy, cmd_buffer);
-                                            // 将命令送入队列
-                                            if (uart_parser_send_command_to_queue(cmd_copy) != pdPASS) {
-                                                ESP_LOGW(NETWORK_TASK_TAG, "Command queue is full, command discarded");
-                                                free(cmd_copy);
-                                                cmd_copy = NULL;
-                                            }
-                                        }
-                                        
-                                        // 重置命令缓冲区索引
-                                        cmd_index = 0;
-                                    }
-                                } else {
-                                    // 将字符添加到命令缓冲区
-                                    if (cmd_index < sizeof(cmd_buffer) - 1) {
-                                        cmd_buffer[cmd_index++] = c;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                break;
-                
-            case NETWORK_PROTOCOL_UDP:
-                if (s_udp) {
-                    int packetSize = s_udp->parsePacket();
-                    if (packetSize) {
-                        // 限制单次读取大小
-                        int read_size = packetSize > sizeof(rx_buffer) - 1 ? sizeof(rx_buffer) - 1 : packetSize;
-                        s_udp->read((uint8_t*)rx_buffer, read_size);
-                        rx_buffer[read_size] = '\0';
-                        
-                        ESP_LOGI(NETWORK_TASK_TAG, "UDP Received %d bytes from %s:%d: %s", 
-                                read_size, s_udp->remoteIP().toString().c_str(), s_udp->remotePort(), rx_buffer);
-                        
-                        // 处理接收到的数据，转发给命令解析系统
-                        // 与TCP客户端处理方式相同
-                        for (int i = 0; i < read_size; i++) {
-                            char c = rx_buffer[i];
-                            
-                            // 检测命令结束符 (回车或换行)
-                            if (c == '\r' || c == '\n') {
-                                if (cmd_index > 0) {
-                                    // 添加字符串结束符
-                                    cmd_buffer[cmd_index] = '\0';
-                                    
-                                    ESP_LOGI(NETWORK_TASK_TAG, "Processing command from UDP: %s", cmd_buffer);
-                                    
-                                    // 将命令发送到解析队列
-                                    static char *cmd_copy = NULL;
-                                    // 释放之前的内存
-                                    if (cmd_copy != NULL) {
-                                        free(cmd_copy);
-                                    }
-                                    // 分配内存并复制命令
-                                    cmd_copy = (char *)malloc(cmd_index + 1);
-                                    if (cmd_copy) {
-                                        strcpy(cmd_copy, cmd_buffer);
-                                        // 将命令送入队列
-                                        if (uart_parser_send_command_to_queue(cmd_copy) != pdPASS) {
-                                            ESP_LOGW(NETWORK_TASK_TAG, "Command queue is full, command discarded");
-                                            free(cmd_copy);
-                                            cmd_copy = NULL;
-                                        }
-                                    }
-                                    
-                                    // 重置命令缓冲区索引
-                                    cmd_index = 0;
-                                }
-                            } else {
-                                // 将字符添加到命令缓冲区
-                                if (cmd_index < sizeof(cmd_buffer) - 1) {
-                                    cmd_buffer[cmd_index++] = c;
-                                }
-                            }
-                        }
-                    }
-                }
-                break;
-                
-            default:
-                break;
-        }
-        
-        // 短暂延时，避免占用过多CPU
-        vTaskDelay(pdMS_TO_TICKS(20));
-    }
 }

@@ -1,5 +1,4 @@
 #include "uart_parser.h"
-#include "servo_commands.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -23,8 +22,37 @@
 /* FreeRTOS 相关的句柄 */
 static QueueHandle_t uart_command_queue = NULL; // 用于接收命令字符串指针的消息队列
 
+
 /* -------------------- 1. 命令处理函数的实现 -------------------- */
-// 在这里添加您的命令处理函数。
+#include "serial_servo.h"
+
+// 串口舵机对象，使用硬件串口2（可根据实际硬件修改）
+static HardwareSerial SerialServoUart(2);
+static SerialServo serialServo(SerialServoUart);
+static bool serialServoInited = false;
+
+static void ensure_serial_servo_inited() {
+    if (!serialServoInited) {
+        serialServo.begin(115200); // 默认波特率，可根据实际情况修改
+        serialServoInited = true;
+    }
+}
+
+static void handle_servo_status(int argc, char *argv[]);
+static void handle_servo_load(int argc, char *argv[]);
+static void handle_servo_mode(int argc, char *argv[]);
+static void handle_servo_position(int argc, char *argv[]);
+static void handle_servo_speed(int argc, char *argv[]);
+
+/* 新增舵机命令处理函数声明 */
+static void handle_servo_get_position(int argc, char *argv[]);
+static void handle_servo_position_delay(int argc, char *argv[]);
+static void handle_servo_get_delay(int argc, char *argv[]);
+static void handle_servo_offset(int argc, char *argv[]);
+static void handle_servo_get_offset(int argc, char *argv[]);
+static void handle_servo_angle_range(int argc, char *argv[]);
+static void handle_servo_get_angle_range(int argc, char *argv[]);
+static void handle_servo_voltage_range(int argc, char *argv[]);
 
 /**
  * @brief 'help' 命令的处理函数。
@@ -135,26 +163,276 @@ static const command_t command_table[] = {
     {"network_reconnect",  handle_network_reconnect,  "network_reconnect: 使用当前配置重新连接网络。"},
     
     /* 舵机控制命令 */
-    {"servo_status",       handle_servo_status,       "servo_status <servo_id>: 获取指定舵机的状态信息。"},
-    {"servo_load",         handle_servo_load,         "servo_load <servo_id> <0|1>: 设置舵机负载状态 (0=卸载, 1=加载)。"},
-    {"servo_mode",         handle_servo_mode,         "servo_mode <servo_id> <0|1>: 设置舵机工作模式 (0=舵机, 1=电机)。"},
-    {"servo_position",     handle_servo_position,     "servo_position <servo_id> <angle> <time_ms>: 舵机模式下控制位移角度和时间。"},
-    {"servo_speed",        handle_servo_speed,        "servo_speed <servo_id> <speed>: 电机模式下设置速度 (-1000到1000)。"},
-    {"servo_gripper",      handle_servo_gripper,      "servo_gripper <servo_id> <percent> <time_ms>: 夹爪控制 (0-100%, 0=闭合, 100=张开)。"},
-    {"servo_gripper_config", handle_servo_gripper_config, "servo_gripper_config <servo_id> <closed_angle> <open_angle> <min_step>: 配置夹爪角度映射。"},
+    {"servo_status",       handle_servo_status,       "servo_status <servo_id>: 查询指定舵机角度/温度/电压。"},
+    {"servo_load",         handle_servo_load,         "servo_load <servo_id> <0|1>: 设置舵机负载(1=加载,0=卸载)。"},
+    {"servo_mode",         handle_servo_mode,         "servo_mode <servo_id> <0|1>: 设置舵机模式(0=舵机,1=电机)。"},
+    {"servo_position",     handle_servo_position,     "servo_position <servo_id> <angle> <time_ms>: 控制舵机转到角度。"},
+    {"servo_speed",        handle_servo_speed,        "servo_speed <servo_id> <speed>: 电机模式下设置速度。"},
     
-    /* 智能夹爪控制命令 - 基于新的gripper_controller */
-    {"servo_gripper_smooth", handle_servo_gripper_smooth, "servo_gripper_smooth <servo_id> <percent> [time_ms]: 丝滑夹爪控制。"},
-    {"servo_gripper_status", handle_servo_gripper_status, "servo_gripper_status <servo_id>: 查询夹爪状态。"},
-    {"servo_gripper_mode",   handle_servo_gripper_mode,   "servo_gripper_mode <servo_id> <open_loop|closed_loop|force_control>: 设置夹爪控制模式。"},
-    {"servo_gripper_params", handle_servo_gripper_params, "servo_gripper_params <servo_id> <slope_inc> <slope_dec> <pid_kp> <pid_ki> <pid_kd> <pid_limit>: 设置控制参数。"},
-    {"servo_gripper_stop",   handle_servo_gripper_stop,   "servo_gripper_stop <servo_id>: 立即停止夹爪运动。"},
-    {"servo_gripper_calibrate", handle_servo_gripper_calibrate, "servo_gripper_calibrate <servo_id> <position>: 夹爪现场校准。"},
-    {"servo_gripper_test",   handle_servo_gripper_test,   "servo_gripper_test <servo_id> <start%> <end%> <step%>: 夹爪精度测试。"},
-    
+    /* 新增舵机命令 */
+    {"servo_get_position", handle_servo_get_position, "servo_get_position <servo_id>: 获取舵机的当前预设位置和时间。"},
+    {"servo_position_delay", handle_servo_position_delay, "servo_position_delay <servo_id> <angle> <time_ms>: 设置延时执行舵机运动。"},
+    {"servo_get_delay",    handle_servo_get_delay,    "servo_get_delay <servo_id>: 获取舵机延时执行的预设位置。"},
+    {"servo_offset",       handle_servo_offset,       "servo_offset <servo_id> <angle> <save>: 设置舵机角度偏移(save=0|1)。"},
+    {"servo_get_offset",   handle_servo_get_offset,   "servo_get_offset <servo_id>: 获取舵机角度偏移值。"},
+    {"servo_angle_range",  handle_servo_angle_range,  "servo_angle_range <servo_id> <min> <max>: 设置舵机角度范围限制。"},
+    {"servo_get_range",    handle_servo_get_angle_range, "servo_get_range <servo_id>: 获取舵机角度范围限制。"},
+    {"servo_voltage_range",handle_servo_voltage_range,"servo_voltage_range <servo_id> <min> <max>: 设置舵机电压范围限制。"},
     /* --- 您可以在此行下方添加您的新命令 --- */
-    
 };
+
+static void handle_servo_status(int argc, char *argv[])
+{
+    if (argc < 2) {
+        uart_parser_put_string("用法: servo_status <servo_id>\r\n");
+        return;
+    }
+    ensure_serial_servo_inited();
+    uint8_t id = (uint8_t)atoi(argv[1]);
+    float angle = 0;
+    int temp = 0;
+    float voltage = 0;
+    char buf[128];
+    if (serialServo.read_servo_position(id, angle) == Operation_Success &&
+        serialServo.read_servo_temp(id, temp) == Operation_Success &&
+        serialServo.read_servo_voltage(id, voltage) == Operation_Success) {
+        snprintf(buf, sizeof(buf), "Servo %d 状态: 角度=%.2f°, 温度=%d°C, 电压=%.2fV\r\n", id, angle, temp, voltage);
+        uart_parser_put_string(buf);
+    } else {
+        uart_parser_put_string("读取舵机状态失败\r\n");
+    }
+}
+
+static void handle_servo_load(int argc, char *argv[])
+{
+    if (argc < 3) {
+        uart_parser_put_string("用法: servo_load <servo_id> <0|1>\r\n");
+        return;
+    }
+    ensure_serial_servo_inited();
+    uint8_t id = (uint8_t)atoi(argv[1]);
+    int load = atoi(argv[2]);
+    if (serialServo.set_servo_motor_load(id, load ? false : true) == Operation_Success) {
+        uart_parser_put_string(load ? "舵机已加载\r\n" : "舵机已卸载\r\n");
+    } else {
+        uart_parser_put_string("设置舵机负载失败\r\n");
+    }
+}
+
+static void handle_servo_mode(int argc, char *argv[])
+{
+    if (argc < 3) {
+        uart_parser_put_string("用法: servo_mode <servo_id> <0|1>\r\n");
+        return;
+    }
+    ensure_serial_servo_inited();
+    uint8_t id = (uint8_t)atoi(argv[1]);
+    int mode = atoi(argv[2]);
+    int speed = 0;
+    // 先读当前速度
+    serialServo.get_servo_mode_and_speed(id, mode, speed);
+    if (serialServo.set_servo_mode_and_speed(id, mode, speed) == Operation_Success) {
+        uart_parser_put_string(mode ? "已切换为电机模式\r\n" : "已切换为舵机模式\r\n");
+    } else {
+        uart_parser_put_string("设置舵机模式失败\r\n");
+    }
+}
+
+static void handle_servo_position(int argc, char *argv[])
+{
+    if (argc < 4) {
+        uart_parser_put_string("用法: servo_position <servo_id> <angle> <time_ms>\r\n");
+        return;
+    }
+    ensure_serial_servo_inited();
+    uint8_t id = (uint8_t)atoi(argv[1]);
+    float angle = (float)atof(argv[2]);
+    uint16_t time_ms = (uint16_t)atoi(argv[3]);
+    if (serialServo.move_servo_immediate(id, angle, time_ms) == Operation_Success) {
+        uart_parser_put_string("舵机移动指令已发送\r\n");
+    } else {
+        uart_parser_put_string("舵机移动失败\r\n");
+    }
+}
+
+static void handle_servo_speed(int argc, char *argv[])
+{
+    if (argc < 3) {
+        uart_parser_put_string("用法: servo_speed <servo_id> <speed>\r\n");
+        return;
+    }
+    ensure_serial_servo_inited();
+    uint8_t id = (uint8_t)atoi(argv[1]);
+    int speed = atoi(argv[2]);
+    // 先读当前模式
+    int mode = 1;
+    serialServo.get_servo_mode_and_speed(id, mode, speed);
+    if (serialServo.set_servo_mode_and_speed(id, 1, speed) == Operation_Success) {
+        uart_parser_put_string("电机速度设置成功\r\n");
+    } else {
+        uart_parser_put_string("设置电机速度失败\r\n");
+    }
+}
+
+/* ------------- 新增舵机命令实现 ------------- */
+
+static void handle_servo_get_position(int argc, char *argv[])
+{
+    if (argc < 2) {
+        uart_parser_put_string("用法: servo_get_position <servo_id>\r\n");
+        return;
+    }
+    ensure_serial_servo_inited();
+    uint8_t id = (uint8_t)atoi(argv[1]);
+    float angle = 0;
+    uint16_t time_ms = 0;
+    char buf[128];
+    
+    if (serialServo.get_servo_move_immediate(id, &angle, &time_ms) == Operation_Success) {
+        snprintf(buf, sizeof(buf), "Servo %d 预设位置: 角度=%.2f°, 执行时间=%d毫秒\r\n", id, angle, time_ms);
+        uart_parser_put_string(buf);
+    } else {
+        uart_parser_put_string("获取舵机预设位置失败\r\n");
+    }
+}
+
+static void handle_servo_position_delay(int argc, char *argv[])
+{
+    if (argc < 4) {
+        uart_parser_put_string("用法: servo_position_delay <servo_id> <angle> <time_ms>\r\n");
+        return;
+    }
+    ensure_serial_servo_inited();
+    uint8_t id = (uint8_t)atoi(argv[1]);
+    float angle = (float)atof(argv[2]);
+    uint16_t time_ms = (uint16_t)atoi(argv[3]);
+    
+    if (serialServo.move_servo_with_time_delay(id, angle, time_ms) == Operation_Success) {
+        uart_parser_put_string("舵机延时移动指令已设置\r\n");
+    } else {
+        uart_parser_put_string("设置舵机延时移动失败\r\n");
+    }
+}
+
+static void handle_servo_get_delay(int argc, char *argv[])
+{
+    if (argc < 2) {
+        uart_parser_put_string("用法: servo_get_delay <servo_id>\r\n");
+        return;
+    }
+    ensure_serial_servo_inited();
+    uint8_t id = (uint8_t)atoi(argv[1]);
+    float angle = 0;
+    uint16_t time_ms = 0;
+    char buf[128];
+    
+    if (serialServo.get_servo_move_with_time_delay(id, angle, time_ms) == Operation_Success) {
+        snprintf(buf, sizeof(buf), "Servo %d 延时预设: 角度=%.2f°, 执行时间=%d毫秒\r\n", id, angle, time_ms);
+        uart_parser_put_string(buf);
+    } else {
+        uart_parser_put_string("获取舵机延时预设失败\r\n");
+    }
+}
+
+static void handle_servo_offset(int argc, char *argv[])
+{
+    if (argc < 4) {
+        uart_parser_put_string("用法: servo_offset <servo_id> <angle> <save>\r\n");
+        return;
+    }
+    ensure_serial_servo_inited();
+    uint8_t id = (uint8_t)atoi(argv[1]);
+    float angle = (float)atof(argv[2]);
+    bool save = (bool)atoi(argv[3]);
+    
+    if (serialServo.set_servo_angle_offset(id, angle, save) == Operation_Success) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "舵机%d角度偏移已设置为%.2f°, %s\r\n", id, angle, save ? "已保存到存储器" : "未保存");
+        uart_parser_put_string(buf);
+    } else {
+        uart_parser_put_string("设置舵机角度偏移失败\r\n");
+    }
+}
+
+static void handle_servo_get_offset(int argc, char *argv[])
+{
+    if (argc < 2) {
+        uart_parser_put_string("用法: servo_get_offset <servo_id>\r\n");
+        return;
+    }
+    ensure_serial_servo_inited();
+    uint8_t id = (uint8_t)atoi(argv[1]);
+    float offset = 0;
+    char buf[128];
+    
+    if (serialServo.get_servo_angle_offset(id, offset) == Operation_Success) {
+        snprintf(buf, sizeof(buf), "Servo %d 角度偏移: %.2f°\r\n", id, offset);
+        uart_parser_put_string(buf);
+    } else {
+        uart_parser_put_string("获取舵机角度偏移失败\r\n");
+    }
+}
+
+static void handle_servo_angle_range(int argc, char *argv[])
+{
+    if (argc < 4) {
+        uart_parser_put_string("用法: servo_angle_range <servo_id> <min> <max>\r\n");
+        return;
+    }
+    ensure_serial_servo_inited();
+    uint8_t id = (uint8_t)atoi(argv[1]);
+    float min_angle = (float)atof(argv[2]);
+    float max_angle = (float)atof(argv[3]);
+    
+    if (serialServo.set_servo_angle_range(id, min_angle, max_angle) == Operation_Success) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "舵机%d角度范围已设置为 %.2f° 至 %.2f°\r\n", id, min_angle, max_angle);
+        uart_parser_put_string(buf);
+    } else {
+        uart_parser_put_string("设置舵机角度范围失败\r\n");
+    }
+}
+
+static void handle_servo_get_angle_range(int argc, char *argv[])
+{
+    if (argc < 2) {
+        uart_parser_put_string("用法: servo_get_range <servo_id>\r\n");
+        return;
+    }
+    ensure_serial_servo_inited();
+    uint8_t id = (uint8_t)atoi(argv[1]);
+    float min_angle = 0;
+    float max_angle = 0;
+    char buf[128];
+    
+    if (serialServo.get_servo_angle_range(id, &min_angle, &max_angle) == Operation_Success) {
+        snprintf(buf, sizeof(buf), "Servo %d 角度范围: %.2f° 至 %.2f°\r\n", id, min_angle, max_angle);
+        uart_parser_put_string(buf);
+    } else {
+        uart_parser_put_string("获取舵机角度范围失败\r\n");
+    }
+}
+
+static void handle_servo_voltage_range(int argc, char *argv[])
+{
+    if (argc < 4) {
+        uart_parser_put_string("用法: servo_voltage_range <servo_id> <min> <max>\r\n");
+        return;
+    }
+    ensure_serial_servo_inited();
+    uint8_t id = (uint8_t)atoi(argv[1]);
+    float min_vin = (float)atof(argv[2]);
+    float max_vin = (float)atof(argv[3]);
+    
+    if (serialServo.set_servo_vin_range(id, min_vin, max_vin) == Operation_Success) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "舵机%d电压范围已设置为 %.2fV 至 %.2fV\r\n", id, min_vin, max_vin);
+        uart_parser_put_string(buf);
+    } else {
+        uart_parser_put_string("设置舵机电压范围失败\r\n");
+    }
+}
+
 
 // 计算命令表中的命令总数
 static const int num_commands = sizeof(command_table) / sizeof(command_t);

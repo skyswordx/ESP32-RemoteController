@@ -8,16 +8,17 @@
 // 包含 uart_parser 模块的头文件
 extern "C" {
 #include "uart_parser.h"
-#include "data_service.h"
 #include "my_wifi_task.h"
-#include "my_data_publisher_task.h"
 }
 
 #define MAIN_TASK_TAG "MAIN"
 
 // Example WiFi credentials
-#define EXAMPLE_ESP_WIFI_SSID      "opti_track_xiaomi"
-#define EXAMPLE_ESP_WIFI_PASS      "sysu_opti_track"
+// #define EXAMPLE_ESP_WIFI_SSID      "opti_track_xiaomi"
+// #define EXAMPLE_ESP_WIFI_PASS      "sysu_opti_track"
+
+#define EXAMPLE_ESP_WIFI_SSID      "RAPID-LAB"
+#define EXAMPLE_ESP_WIFI_PASS      "sysurapidlab"
 
 // 为 uart_parser 模块实现串口发送函数
 // uart_parser.c 中的 uart_parser_put_string 是弱函数，我们在这里提供强实现
@@ -33,57 +34,46 @@ void setup() {
 
     ESP_LOGI(MAIN_TASK_TAG, "ESP32 WiFi Task with Arduino");
 
-    // 初始化DataPlatform数据服务层
-    if (data_service_init() != pdPASS) {
-        ESP_LOGE(MAIN_TASK_TAG, "Failed to initialize data service");
-        return;
-    }
-    ESP_LOGI(MAIN_TASK_TAG, "DataPlatform initialized successfully");
 
     // 创建 uart_parser 任务
     if (xTaskCreate(uart_parser_task, "UART_Parser_Task", 4096, NULL, tskIDLE_PRIORITY + 2, NULL) != pdPASS) {
         ESP_LOGE(MAIN_TASK_TAG, "Failed to create UART Parser task");
     }
 
-    // ...已删除舵机与夹爪控制相关接口...
+    Serial2.begin(115200, SERIAL_8N1, 16, 17);
+
 
     // Configure WiFi Task for STA mode with TCP client
-    // wifi_task_config_t wifi_config;
-    // memset(&wifi_config, 0, sizeof(wifi_task_config_t));
+    wifi_task_config_t wifi_config;
+    memset(&wifi_config, 0, sizeof(wifi_task_config_t));
 
-    // wifi_config.wifi_mode = WIFI_STA;
-    // strncpy(wifi_config.ssid, EXAMPLE_ESP_WIFI_SSID, sizeof(wifi_config.ssid) - 1);
-    // strncpy(wifi_config.password, EXAMPLE_ESP_WIFI_PASS, sizeof(wifi_config.password) - 1);
+    wifi_config.wifi_mode = WIFI_STA;
+    strncpy(wifi_config.ssid, EXAMPLE_ESP_WIFI_SSID, sizeof(wifi_config.ssid) - 1);
+    strncpy(wifi_config.password, EXAMPLE_ESP_WIFI_PASS, sizeof(wifi_config.password) - 1);
     
-    // wifi_config.power_save = false; // Disable power saving for best performance
-    // wifi_config.tx_power = WIFI_POWER_19_5dBm; // Set max power
-    // wifi_config.sta_connect_timeout_ms = 15000; // 15 seconds timeout
+    wifi_config.power_save = false; // Disable power saving for best performance
+    wifi_config.tx_power = WIFI_POWER_19_5dBm; // Set max power
+    wifi_config.sta_connect_timeout_ms = 15000; // 15 seconds timeout
 
-    // // Configure network as TCP client
-    // wifi_config.network_config.protocol = NETWORK_PROTOCOL_TCP_CLIENT;
-    // strncpy(wifi_config.network_config.remote_host, "192.168.31.136", sizeof(wifi_config.network_config.remote_host) - 1); // 通常手机热点的网关IP
-    // wifi_config.network_config.remote_port = 2233; // 手机端TCP服务器端口，您可以根据实际情况修改
-    // wifi_config.network_config.auto_connect = true; // WiFi连接成功后自动开始TCP连接
-    // wifi_config.network_config.connect_timeout_ms = 10000; // 10 seconds timeout for TCP connection
+    // Configure network as TCP client
+    wifi_config.network_config.protocol = NETWORK_PROTOCOL_TCP_CLIENT;
+    strncpy(wifi_config.network_config.remote_host, "192.168.1.101", sizeof(wifi_config.network_config.remote_host) - 1); // 通常手机热点的网关IP
+    wifi_config.network_config.remote_port = 2233; // 手机端TCP服务器端口，您可以根据实际情况修改
+    wifi_config.network_config.auto_connect = true; // WiFi连接成功后自动开始TCP连接
+    wifi_config.network_config.connect_timeout_ms = 10000; // 10 seconds timeout for TCP connection
 
-    // // 初始化 WiFi 配置
-    // if (wifi_init_config(&wifi_config) != pdPASS) {
-    //     ESP_LOGE(MAIN_TASK_TAG, "Failed to initialize WiFi config");
-    // } else {
-    //     // 创建 WiFi RTOS 任务
-    //     if (xTaskCreate(my_wifi_task, "WiFi_Task", 4096, NULL, tskIDLE_PRIORITY + 2, NULL) != pdPASS) {
-    //         ESP_LOGE(MAIN_TASK_TAG, "Failed to create WiFi RTOS task");
-    //     } else {
-    //         ESP_LOGI(MAIN_TASK_TAG, "WiFi RTOS task created successfully");
-    //     }
-    // }
+    // 初始化 WiFi 配置
+    if (wifi_init_config(&wifi_config) != pdPASS) {
+        ESP_LOGE(MAIN_TASK_TAG, "Failed to initialize WiFi config");
+    } else {
+        // 创建 WiFi RTOS 任务
+        if (xTaskCreate(my_wifi_task, "WiFi_Task", 4096, NULL, tskIDLE_PRIORITY + 2, NULL) != pdPASS) {
+            ESP_LOGE(MAIN_TASK_TAG, "Failed to create WiFi RTOS task");
+        } else {
+            ESP_LOGI(MAIN_TASK_TAG, "WiFi RTOS task created successfully");
+        }
+    }
 
-    // // 创建数据发布任务
-    // if (xTaskCreate(data_publisher_task, "Data_Publisher_Task", 4096, NULL, tskIDLE_PRIORITY + 1, NULL) != pdPASS) {
-    //     ESP_LOGE(MAIN_TASK_TAG, "Failed to create data publisher task");
-    // } else {
-    //     ESP_LOGI(MAIN_TASK_TAG, "Data publisher task created successfully");
-    // }
 }
 
 void loop() { /* 类似 defaultTask */
