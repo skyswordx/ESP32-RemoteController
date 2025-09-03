@@ -12,7 +12,8 @@ static encoder_button_callback_t button_callback = nullptr;
 static int32_t last_position = 0;
 static bool last_button_state = false;
 static unsigned long last_button_time = 0;
-static const unsigned long DEBOUNCE_DELAY = 50; // 防抖延时 50ms
+static const unsigned long DEBOUNCE_DELAY = 80; // 增加防抖延时至80ms
+static bool button_initialized = false;  // 添加初始化标志
 
 // 编码器初始化
 esp_err_t encoder_init(const encoder_config_t* config) {
@@ -32,6 +33,10 @@ esp_err_t encoder_init(const encoder_config_t* config) {
     // 初始化按钮引脚（如果配置了）
     if (config->pin_button != 255) {
         pinMode(config->pin_button, config->use_pullup ? INPUT_PULLUP : INPUT);
+        
+        // 初始化按钮状态 - 额外添加初始化步骤
+        button_initialized = false;
+        vTaskDelay(pdMS_TO_TICKS(10)); // 给引脚状态稳定一些时间
     }
 
     ESP_LOGI(TAG, "Encoder initialized: PIN_A=%d, PIN_B=%d, BUTTON=%d", 
@@ -96,19 +101,52 @@ void encoder_handler(void) {
         if (encoder_config.use_pullup) {
             current_button_state = !current_button_state; // 上拉时逻辑反转
         }
-
+        
         unsigned long current_time = millis();
+        
+        // 首次初始化按钮状态
+        if (!button_initialized) {
+            if (current_time > 1000) {  // 系统启动1秒后再初始化按钮
+                last_button_state = current_button_state; // 不触发回调，只记录初始状态
+                last_button_time = current_time;
+                button_initialized = true;
+                ESP_LOGI(TAG, "Button initialized, initial state: %s", 
+                         current_button_state ? "PRESSED" : "RELEASED");
+            }
+            return;  // 初始化阶段不处理按钮事件
+        }
+        
+        // 状态变化检测和防抖处理
         if (current_button_state != last_button_state && 
             (current_time - last_button_time) > DEBOUNCE_DELAY) {
             
-            last_button_state = current_button_state;
-            last_button_time = current_time;
+            // 再次检查状态，确保不是瞬态干扰
+            vTaskDelay(pdMS_TO_TICKS(5));  // 短暂延时
+            bool verify_state = digitalRead(encoder_config.pin_button);
+            if (encoder_config.use_pullup) {
+                verify_state = !verify_state;
+            }
             
-            ESP_LOGD(TAG, "Button state: %s", current_button_state ? "PRESSED" : "RELEASED");
-            
-            // 调用按钮回调函数
-            if (button_callback) {
-                button_callback(current_button_state);
+            // 如果状态一致，才认为是真实的按钮事件
+            if (verify_state == current_button_state) {
+                last_button_state = current_button_state;
+                last_button_time = current_time;
+                
+                ESP_LOGD(TAG, "Button state: %s", current_button_state ? "PRESSED" : "RELEASED");
+                
+                // 调用按钮回调函数
+                if (button_callback) {
+                    button_callback(current_button_state);
+                }
+                
+                // 更新到DataPlatform
+                encoder_data_t encoder_data = {
+                    .position = encoder_get_position(),
+                    .delta = 0,  // 按钮事件不涉及位置变化
+                    .button_pressed = current_button_state,
+                    .timestamp = xTaskGetTickCount()
+                };
+                data_service_update_encoder(&encoder_data);
             }
         }
     }
@@ -116,13 +154,22 @@ void encoder_handler(void) {
 
 // 获取编码器按钮状态
 bool encoder_get_button_state(void) {
-    if (encoder_config.pin_button == 255) {
-        return false;
+    if (encoder_config.pin_button == 255 || !button_initialized) {
+        return false;  // 如果按钮未配置或未初始化，返回false
     }
     
-    bool state = digitalRead(encoder_config.pin_button);
-    if (encoder_config.use_pullup) {
-        state = !state; // 上拉时逻辑反转
+    // 读取按钮状态 - 使用多次采样提高可靠性
+    int samples = 0;
+    for (int i = 0; i < 3; i++) {
+        bool state = digitalRead(encoder_config.pin_button);
+        if (encoder_config.use_pullup) {
+            state = !state; // 上拉时逻辑反转
+        }
+        
+        if (state) samples++;
+        if (i < 2) vTaskDelay(pdMS_TO_TICKS(1));  // 每次采样间隔1ms
     }
-    return state;
+    
+    // 多数投票法确定最终状态
+    return (samples >= 2);  // 至少2个样本为高电平，认为按钮被按下
 }
