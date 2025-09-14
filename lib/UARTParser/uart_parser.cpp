@@ -49,6 +49,7 @@ static void handle_servo_get_cmd_position(int argc, char *argv[]);
 static void handle_servo_read_now_position(int argc, char *argv[]);
 static void handle_servo_position_delay(int argc, char *argv[]);
 static void handle_servo_position_test(int argc, char *argv[]);
+static void handle_gripper_control(int argc, char *argv[]);
 static void handle_servo_get_delay(int argc, char *argv[]);
 static void handle_servo_offset(int argc, char *argv[]);
 static void handle_servo_get_offset(int argc, char *argv[]);
@@ -176,6 +177,7 @@ static const command_t command_table[] = {
     {"servo_read_now_position", handle_servo_read_now_position, "servo_read_now_position <servo_id>: 读取舵机的实时当前角度位置。"},
     {"servo_position_delay", handle_servo_position_delay, "servo_position_delay <servo_id> <angle> <time_ms>: 设置延时执行舵机运动。"},
     {"servo_position_test", handle_servo_position_test, "servo_position_test <servo_id> <angle> <time_ms>: 测试舵机运动并记录预设值与实际值。"},
+    {"gripper_control", handle_gripper_control, "gripper_control <servo_id> <normalized_value> <time_ms>: 夹爪控制(0.0-1.0归一化值)。"},
     {"servo_get_delay",    handle_servo_get_delay,    "servo_get_delay <servo_id>: 获取舵机延时执行的预设位置。"},
     {"servo_offset",       handle_servo_offset,       "servo_offset <servo_id> <angle> <save>: 设置舵机角度偏移(save=0|1)。"},
     {"servo_get_offset",   handle_servo_get_offset,   "servo_get_offset <servo_id>: 获取舵机角度偏移值。"},
@@ -383,6 +385,94 @@ static void handle_servo_position_test(int argc, char *argv[])
              input_error,
              preset_error,
              id, target_angle, preset_angle, actual_angle);
+    uart_parser_put_string(buf);
+}
+
+static void handle_gripper_control(int argc, char *argv[])
+{
+    if (argc < 4) {
+        uart_parser_put_string("用法: gripper_control <servo_id> <normalized_value> <time_ms>\r\n");
+        uart_parser_put_string("normalized_value: 0.0(完全张开) ~ 1.0(完全闭合)\r\n");
+        return;
+    }
+    
+    ensure_serial_servo_inited();
+    uint8_t id = (uint8_t)atoi(argv[1]);
+    float normalized_value = (float)atof(argv[2]);
+    uint16_t time_ms = (uint16_t)atoi(argv[3]);
+    
+    // 夹爪舵机角度范围定义
+    const float ANGLE_INPUT_MIN = 101.00f;  // 完全张开时的角度
+    const float ANGLE_INPUT_MAX = 147.00f;  // 完全闭合时的角度
+    
+    // 输入值检查
+    if (normalized_value < 0.0f || normalized_value > 1.0f) {
+        uart_parser_put_string("错误: 归一化值必须在0.0~1.0范围内\r\n");
+        return;
+    }
+    
+    if (time_ms < 100) {
+        uart_parser_put_string("警告: 执行时间建议不少于100毫秒\r\n");
+    }
+    
+    // 将归一化值映射到实际角度
+    // 0.0 -> ANGLE_INPUT_MIN (张开), 1.0 -> ANGLE_INPUT_MAX (闭合)
+    float target_angle = ANGLE_INPUT_MIN + (normalized_value * (ANGLE_INPUT_MAX - ANGLE_INPUT_MIN));
+    
+    char buf[512];
+    
+    // 输出控制信息
+    snprintf(buf, sizeof(buf), 
+             "夹爪控制开始:\r\n"
+             "  舵机ID: %d\r\n"
+             "  归一化输入: %.3f (0.0=张开, 1.0=闭合)\r\n"
+             "  映射角度: %.2f° (范围: %.2f° ~ %.2f°)\r\n"
+             "  执行时间: %d毫秒\r\n",
+             id, normalized_value, target_angle, ANGLE_INPUT_MIN, ANGLE_INPUT_MAX, time_ms);
+    uart_parser_put_string(buf);
+    
+    // 发送舵机控制命令
+    if (serialServo.move_servo_immediate(id, target_angle, time_ms) != Operation_Success) {
+        uart_parser_put_string("ERROR:MOVE_FAILED\r\n");
+        return;
+    }
+    
+    uart_parser_put_string("夹爪开始运动...\r\n");
+    
+    // 等待舵机运动完成 + 额外稳定时间
+    uint32_t total_wait_time = time_ms + 200; // 额外200ms稳定时间
+    vTaskDelay(pdMS_TO_TICKS(total_wait_time));
+    
+    // 读取舵机实际位置
+    float actual_angle = 0.0f;
+    if (serialServo.read_servo_position(id, actual_angle) != Operation_Success) {
+        uart_parser_put_string("ERROR:READ_FAILED\r\n");
+        return;
+    }
+    
+    // 将实际角度逆向映射为归一化值
+    float actual_normalized = 0.0f;
+    if (actual_angle <= ANGLE_INPUT_MIN) {
+        actual_normalized = 0.0f;
+    } else if (actual_angle >= ANGLE_INPUT_MAX) {
+        actual_normalized = 1.0f;
+    } else {
+        actual_normalized = (actual_angle - ANGLE_INPUT_MIN) / (ANGLE_INPUT_MAX - ANGLE_INPUT_MIN);
+    }
+    
+    // 计算误差
+    float angle_error = actual_angle - target_angle;
+    float normalized_error = actual_normalized - normalized_value;
+    
+    // 输出结果
+    snprintf(buf, sizeof(buf), 
+             "夹爪控制完成:\r\n"
+             "  目标角度: %.2f° -> 实际角度: %.2f° (误差: %.2f°)\r\n"
+             "  目标归一化: %.3f -> 实际归一化: %.3f (误差: %.3f)\r\n"
+             "GRIPPER_RESULT:%.3f\r\n",
+             target_angle, actual_angle, angle_error,
+             normalized_value, actual_normalized, normalized_error,
+             actual_normalized);
     uart_parser_put_string(buf);
 }
 
